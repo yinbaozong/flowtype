@@ -1,0 +1,64 @@
+{
+  "name": "flowtype",
+  "version": "0.2.0",
+  "description": "Windows voice dictation utility with a floating recording bar",
+  "author": "FlowType",
+  "main": "out/main/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "dist": "npm run build && electron-builder --win nsis",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "lucide-react": "^0.468.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.0.3",
+    "@types/react-dom": "^19.0.2",
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^35.0.0",
+    "electron-builder": "^25.1.8",
+    "electron-vite": "^3.0.0",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5"
+  },
+  "build": {
+    "appId": "com.flowtype.desktop",
+    "productName": "FlowType",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/windows-key-hook.ps1",
+        "to": "windows-key-hook.ps1"
+      },
+      {
+        "from": "resources/flowtype-tray.png",
+        "to": "flowtype-tray.png"
+      },
+      {
+        "from": "resources/flowtype-icon.png",
+        "to": "flowtype-icon.png"
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "resources/flowtype.ico",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}
