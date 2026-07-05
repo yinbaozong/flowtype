@@ -35,7 +35,7 @@ No cloud account is bundled with the app. Users configure their own speech API k
 Most users should install from GitHub Releases:
 
 1. Open the latest release: https://github.com/yinbaozong/flowtype/releases/latest
-2. Download `FlowType Setup 0.2.0.exe`.
+2. Download `FlowType.Setup.0.2.0.exe`.
 3. Run the installer.
 4. If Windows warns that the publisher is unknown, only continue if you trust the downloaded file.
 5. Start FlowType, open Settings, and add your own speech API key.
@@ -80,7 +80,7 @@ Build the Windows installer:
 npm run dist
 ```
 
-The installer is written to `release/FlowType Setup 0.2.0.exe`.
+The installer is written locally to `release/FlowType Setup 0.2.0.exe`. GitHub Releases may display the uploaded asset as `FlowType.Setup.0.2.0.exe`.
 
 ## First Setup
 
