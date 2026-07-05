@@ -42,6 +42,10 @@ Most users should install from GitHub Releases:
 
 The installer is unsigned. Windows SmartScreen or Smart App Control may warn or block it. That is normal for self-built open-source Windows installers. A public production release should be signed with a trusted code signing certificate.
 
+## Need Help?
+
+If you want to reproduce this project but are not sure how to start, feel free to contact me anytime: yinbaozong@163.com
+
 ## Requirements
 
 - Windows 10/11
