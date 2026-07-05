@@ -6,6 +6,8 @@ FlowType is a Windows desktop voice dictation tool built with Electron, React, a
 
 ![FlowType concept](docs/flowtype-concept.png)
 
+![Direct install flow](docs/install-release.svg)
+
 ## Why Star This
 
 - System-wide voice input for Windows, not just a demo inside one textbox.
@@ -16,6 +18,8 @@ FlowType is a Windows desktop voice dictation tool built with Electron, React, a
 - API keys are stored with Electron `safeStorage` on the local Windows account.
 - Ships with a full build pipeline: dev app, production build, and NSIS installer.
 
+![FlowType implementation](docs/flowtype-implementation.png)
+
 ## The Experience
 
 1. Put the cursor in any text field: editor, browser, chat app, notes app.
@@ -25,6 +29,18 @@ FlowType is a Windows desktop voice dictation tool built with Electron, React, a
 5. FlowType transcribes and pastes the result where your cursor was.
 
 No cloud account is bundled with the app. Users configure their own speech API key in Settings.
+
+## Install Without Building
+
+Most users should install from GitHub Releases:
+
+1. Open the latest release: https://github.com/yinbaozong/flowtype/releases/latest
+2. Download `FlowType Setup 0.2.0.exe`.
+3. Run the installer.
+4. If Windows warns that the publisher is unknown, only continue if you trust the downloaded file.
+5. Start FlowType, open Settings, and add your own speech API key.
+
+The installer is unsigned. Windows SmartScreen or Smart App Control may warn or block it. That is normal for self-built open-source Windows installers. A public production release should be signed with a trusted code signing certificate.
 
 ## Requirements
 
@@ -77,6 +93,56 @@ The installer is written to `release/FlowType Setup 0.2.0.exe`.
 7. Put your cursor in any text field and try a short sentence.
 
 Demo mode is useful for checking the UI flow without calling a real provider. Real dictation requires Qwen or Volcano credentials.
+
+## Shortcut Behavior
+
+FlowType supports two shortcut modes:
+
+- Hold-to-talk presets: `Win + Space` and `Alt + Win`. These use `resources/windows-key-hook.ps1`, so recording starts when the keys go down and stops when you release them.
+- Custom shortcuts: capture a combination in Settings, such as `Ctrl + Alt + D`. These use Electron `globalShortcut`, so they work as a toggle: press once to start recording, press again to stop.
+
+Current verification:
+
+- The custom shortcut capture UI is implemented in `src/renderer/src/App.tsx`.
+- Shortcut normalization and registration are implemented in `src/main/index.ts`.
+- `npm run typecheck`, `npm run build`, and `npm run dist` pass on Windows.
+- Manual OS-level shortcut behavior should still be checked on the target Windows machine because global shortcuts can be blocked by other apps or reserved by Windows.
+
+## Get An API Key
+
+![API setup](docs/api-setup.svg)
+
+### Option A: Alibaba Cloud Bailian / Qwen
+
+This is the simplest path because FlowType only needs one API key.
+
+1. Open Alibaba Cloud Model Studio / Bailian: https://bailian.console.aliyun.com/
+2. Sign in with an Alibaba Cloud account.
+3. Activate Bailian / Model Studio if the console asks you to enable the service.
+4. Open API Key management. In many accounts this is shown as `API-KEY`, `API Key`, or `API Key 管理`.
+5. Create a new API key.
+6. Copy the key once and keep it private.
+7. In FlowType Settings, choose `千问 Qwen3-ASR`.
+8. Paste the key into `千问 API Key`.
+9. Click `保存并测试当前识别服务`.
+
+FlowType calls Qwen `qwen3-asr-flash` through the DashScope-compatible endpoint. Alibaba's Qwen-ASR API reference lists `qwen3-asr-flash` as supporting OpenAI-compatible and DashScope synchronous calls, and its examples use `Authorization: Bearer $DASHSCOPE_API_KEY`.
+
+### Option B: Volcano Engine BigModel ASR
+
+Use this if you already have Volcano Engine speech recognition enabled.
+
+1. Open Volcano Engine and sign in: https://www.volcengine.com/
+2. Enter the speech / audio technology console.
+3. Enable BigModel speech recognition if it is not already enabled.
+4. Find the API credential section for BigModel ASR.
+5. Prefer the modern API Key credential if your console provides one.
+6. In FlowType Settings, choose `火山大模型`.
+7. Paste that value into `火山 API Key`.
+8. Leave `火山 App ID` and `火山 Access Key` empty unless your console gives you the older App Key + Access Key style credentials.
+9. Click `保存并测试当前识别服务`.
+
+FlowType calls `https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash` with resource id `volc.bigasr.auc_turbo`.
 
 ## Data And Privacy
 

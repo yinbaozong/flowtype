@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="360" viewBox="0 0 980 360" role="img" aria-labelledby="title desc">
+  <title id="title">FlowType API setup</title>
+  <desc id="desc">Choose a provider, paste an API key, test it, then start voice input.</desc>
+  <rect width="980" height="360" rx="22" fill="#f8fafc"/>
+  <text x="48" y="58" fill="#101828" font-family="Segoe UI, Arial, sans-serif" font-size="30" font-weight="750">Bring your own speech model key</text>
+  <text x="48" y="92" fill="#516074" font-family="Segoe UI, Arial, sans-serif" font-size="15">FlowType stores the key locally and uses it only when you speak.</text>
+  <g font-family="Segoe UI, Arial, sans-serif">
+    <rect x="58" y="132" width="386" height="168" rx="18" fill="#eef4ff" stroke="#c7d7fe"/>
+    <text x="92" y="172" fill="#1d4ed8" font-size="22" font-weight="750">Qwen Qwen3-ASR</text>
+    <text x="92" y="204" fill="#334155" font-size="14">1. Open Alibaba Cloud Model Studio</text>
+    <text x="92" y="230" fill="#334155" font-size="14">2. Create or copy a Bailian API Key</text>
+    <text x="92" y="256" fill="#334155" font-size="14">3. Paste it into FlowType Settings</text>
+    <rect x="536" y="132" width="386" height="168" rx="18" fill="#fff7ed" stroke="#fed7aa"/>
+    <text x="570" y="172" fill="#c2410c" font-size="22" font-weight="750">Volcano BigModel ASR</text>
+    <text x="570" y="204" fill="#334155" font-size="14">1. Enable BigModel speech recognition</text>
+    <text x="570" y="230" fill="#334155" font-size="14">2. Copy API Key or legacy auth fields</text>
+    <text x="570" y="256" fill="#334155" font-size="14">3. Save and test in FlowType</text>
+  </g>
+  <rect x="58" y="318" width="864" height="24" rx="12" fill="#e2e8f0"/>
+  <text x="82" y="335" fill="#334155" font-family="Segoe UI, Arial, sans-serif" font-size="13">Tip: Qwen is the simplest path today because FlowType only needs one API Key for that provider.</text>
+</svg>

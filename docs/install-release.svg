@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="340" viewBox="0 0 980 340" role="img" aria-labelledby="title desc">
+  <title id="title">FlowType direct install flow</title>
+  <desc id="desc">Download installer from GitHub Releases, run setup, configure API key, and start dictation.</desc>
+  <rect width="980" height="340" rx="22" fill="#0f172a"/>
+  <text x="48" y="58" fill="#f8fafc" font-family="Segoe UI, Arial, sans-serif" font-size="30" font-weight="750">Direct install from GitHub Releases</text>
+  <text x="48" y="92" fill="#cbd5e1" font-family="Segoe UI, Arial, sans-serif" font-size="15">No source build required. Download the installer, run setup, then add your own ASR API key.</text>
+  <g font-family="Segoe UI, Arial, sans-serif">
+    <rect x="54" y="136" width="180" height="94" rx="18" fill="#2563eb"/>
+    <text x="94" y="174" fill="#fff" font-size="18" font-weight="750">Release page</text>
+    <text x="82" y="200" fill="#dbeafe" font-size="12">Download .exe asset</text>
+    <rect x="294" y="136" width="180" height="94" rx="18" fill="#0f766e"/>
+    <text x="336" y="174" fill="#fff" font-size="18" font-weight="750">Installer</text>
+    <text x="322" y="200" fill="#ccfbf1" font-size="12">FlowType Setup</text>
+    <rect x="534" y="136" width="180" height="94" rx="18" fill="#7c3aed"/>
+    <text x="574" y="174" fill="#fff" font-size="18" font-weight="750">API key</text>
+    <text x="566" y="200" fill="#ede9fe" font-size="12">Qwen or Volcano</text>
+    <rect x="774" y="136" width="152" height="94" rx="18" fill="#16a34a"/>
+    <text x="813" y="174" fill="#fff" font-size="18" font-weight="750">Dictate</text>
+    <text x="802" y="200" fill="#dcfce7" font-size="12">Hotkey to paste</text>
+  </g>
+  <g stroke="#94a3b8" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M240 183h48"/><path d="M282 173l12 10-12 10"/>
+    <path d="M480 183h48"/><path d="M522 173l12 10-12 10"/>
+    <path d="M720 183h48"/><path d="M762 173l12 10-12 10"/>
+  </g>
+  <rect x="54" y="264" width="872" height="36" rx="12" fill="#111827" stroke="#334155"/>
+  <text x="80" y="287" fill="#e5e7eb" font-family="Consolas, monospace" font-size="14">https://github.com/yinbaozong/flowtype/releases/latest</text>
+</svg>
