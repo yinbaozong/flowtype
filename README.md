@@ -128,6 +128,11 @@ This is the simplest path because FlowType only needs one API key.
 
 FlowType calls Qwen `qwen3-asr-flash` through the DashScope-compatible endpoint. Alibaba's Qwen-ASR API reference lists `qwen3-asr-flash` as supporting OpenAI-compatible and DashScope synchronous calls, and its examples use `Authorization: Bearer $DASHSCOPE_API_KEY`.
 
+Official references:
+
+- Get API Key: https://help.aliyun.com/zh/model-studio/get-api-key
+- Qwen-ASR API: https://help.aliyun.com/zh/model-studio/qwen-asr-api-reference
+
 ### Option B: Volcano Engine BigModel ASR
 
 Use this if you already have Volcano Engine speech recognition enabled.
@@ -143,6 +148,11 @@ Use this if you already have Volcano Engine speech recognition enabled.
 9. Click `保存并测试当前识别服务`.
 
 FlowType calls `https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash` with resource id `volc.bigasr.auc_turbo`.
+
+Official references:
+
+- Authentication: https://www.volcengine.com/docs/6561/107789
+- BigModel recording recognition: https://www.volcengine.com/docs/6561/1354868
 
 ## Data And Privacy
 
