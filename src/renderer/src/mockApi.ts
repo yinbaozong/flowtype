@@ -79,6 +79,7 @@ export const mockApi: FlowApi = {
     emitState()
     return state
   },
+  exportHistory: async () => ({ canceled: false, path: 'FlowType-history.md', count: state.history.length }),
   copyText: async () => undefined,
   pasteLast: async () => undefined,
   transcribe: async () => ({ text: '浏览器预览识别文本' }),
@@ -92,6 +93,7 @@ export const mockApi: FlowApi = {
   cancelRecording: async () => undefined,
   reportRecordingError: async () => undefined,
   testProvider: async () => ({ ok: true, message: '连接成功' }),
+  captureShortcut: async () => ({ shortcut: 'Control+Alt+D' }),
   openDashboard: async () => undefined,
   resetOverlayPosition: async () => undefined,
   startOverlayDrag: () => undefined,

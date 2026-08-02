@@ -2,7 +2,7 @@ import {
   app,
   BrowserWindow,
   clipboard,
-  globalShortcut,
+  dialog,
   ipcMain,
   Menu,
   nativeImage,
@@ -20,6 +20,7 @@ import type {
   AppState,
   HistoryItem,
   OverlayState,
+  Provider,
   PublicSettings,
   TranscribeRequest
 } from '../shared/types'
@@ -67,10 +68,12 @@ let pasteTargetExpected = false
 let pasteTargetHwnd = 0
 let pasteTargetFocusHwnd = 0
 let hotkeyHook: ChildProcessWithoutNullStreams | null = null
+let shortcutCapture: ChildProcessWithoutNullStreams | null = null
 let shortcutReady = false
 let maximumRecordingTimer: NodeJS.Timeout | null = null
 let lastProgrammaticOverlayBounds: Electron.Rectangle | null = null
 let overlayMoveTimer: NodeJS.Timeout | null = null
+let overlayTopMostTimer: NodeJS.Timeout | null = null
 let overlayDragOffset: { x: number; y: number } | null = null
 
 const preferredDataPath =
@@ -180,8 +183,40 @@ function setOverlayState(state: OverlayState): void {
   overlayState = state
   positionOverlay(state.mode)
   overlayWindow?.webContents.send('overlay:state', state)
-  overlayWindow?.webContents.invalidate()
   overlayWindow?.showInactive()
+  enforceOverlayTopMost()
+}
+
+function enforceOverlayTopMost(): void {
+  if (!overlayWindow || overlayWindow.isDestroyed()) return
+  overlayWindow.setAlwaysOnTop(true, 'screen-saver', 1)
+  overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  overlayWindow.moveTop()
+}
+
+function roundedOverlayShape(width: number, mode: OverlayState['mode']): Electron.Rectangle[] {
+  const visibleWidth = mode === 'idle' ? Math.max(1, width - 6) : width
+  const visibleHeight = mode === 'idle' ? 18 : 34
+  const originX = mode === 'idle' ? 3 : 0
+  const originY = Math.round((51 - visibleHeight) / 2)
+  const radius = visibleHeight / 2
+  const rectangles: Electron.Rectangle[] = []
+  for (let row = 0; row < visibleHeight; row += 1) {
+    const distanceY = Math.abs(row + 0.5 - radius)
+    const inset = Math.max(0, Math.ceil(radius - Math.sqrt(Math.max(0, radius * radius - distanceY * distanceY))))
+    rectangles.push({
+      x: originX + inset,
+      y: originY + row,
+      width: Math.max(1, visibleWidth - inset * 2),
+      height: 1
+    })
+  }
+  return rectangles
+}
+
+function updateOverlayShape(width: number, mode = overlayState.mode): void {
+  if (!overlayWindow || overlayWindow.isDestroyed() || process.platform !== 'win32') return
+  overlayWindow.setShape(roundedOverlayShape(width, mode))
 }
 
 function positionOverlay(mode = overlayState.mode): void {
@@ -207,8 +242,8 @@ function positionOverlay(mode = overlayState.mode): void {
   const x = Math.round(Math.min(bounds.x + bounds.width - width, Math.max(bounds.x, position.x)))
   const y = Math.round(Math.min(bounds.y + bounds.height - height, Math.max(bounds.y, position.y)))
   lastProgrammaticOverlayBounds = { x, y, width, height }
-  overlayWindow.setBounds(lastProgrammaticOverlayBounds, true)
-  overlayWindow.webContents.invalidate()
+  overlayWindow.setBounds(lastProgrammaticOverlayBounds, false)
+  updateOverlayShape(width, mode)
 }
 
 function saveOverlayPosition(): void {
@@ -281,13 +316,17 @@ function createOverlayWindow(): void {
     alwaysOnTop: true,
     focusable: false,
     hasShadow: false,
+    paintWhenInitiallyHidden: true,
     webPreferences: {
       preload: join(__dirname, '../preload/index.mjs'),
       sandbox: false,
       backgroundThrottling: false
     }
   })
-  overlayWindow.setAlwaysOnTop(true, 'floating')
+  overlayWindow.setBackgroundColor('#00000000')
+  if (process.platform === 'win32') overlayWindow.setBackgroundMaterial('none')
+  overlayWindow.setHasShadow(false)
+  enforceOverlayTopMost()
   overlayWindow.setTitle('')
   overlayWindow.setVisibleOnAllWorkspaces(true)
   overlayWindow.on('moved', () => {
@@ -295,12 +334,19 @@ function createOverlayWindow(): void {
     if (overlayMoveTimer) clearTimeout(overlayMoveTimer)
     overlayMoveTimer = setTimeout(saveOverlayPosition, 180)
   })
+  overlayWindow.on('show', enforceOverlayTopMost)
   overlayWindow.webContents.on('did-finish-load', () => {
     positionOverlay()
     overlayWindow?.webContents.send('overlay:state', overlayState)
+  })
+  overlayWindow.once('ready-to-show', () => {
+    positionOverlay()
     overlayWindow?.showInactive()
+    enforceOverlayTopMost()
   })
   loadWindow(overlayWindow, '#overlay')
+  overlayTopMostTimer = setInterval(enforceOverlayTopMost, 1500)
+  overlayTopMostTimer.unref()
 }
 
 function trayIcon(): Electron.NativeImage {
@@ -341,17 +387,18 @@ function createTray(): void {
   tray.on('click', showDashboard)
 }
 
-function registerShortcut(): void {
-  globalShortcut.unregisterAll()
+async function registerShortcut(): Promise<boolean> {
   stopHotkeyHook()
   shortcutReady = false
-
-  if (settings.shortcut === 'Super+Space' || settings.shortcut === 'Alt+Super') {
-    startHotkeyHook()
-  } else {
-    shortcutReady = globalShortcut.register(settings.shortcut, toggleRecording)
+  try {
+    validateShortcut(settings.shortcut)
+    await startHotkeyHook(settings.shortcut)
+    shortcutReady = true
+  } catch {
+    shortcutReady = false
   }
   broadcastState()
+  return shortcutReady
 }
 
 function hotkeyScriptPath(): string {
@@ -360,39 +407,108 @@ function hotkeyScriptPath(): string {
     : join(appRoot, 'resources', 'windows-key-hook.ps1')
 }
 
-function startHotkeyHook(): void {
-  const mode = settings.shortcut === 'Alt+Super' ? 'AltWin' : 'WinSpace'
-  const child = spawn(
-    'powershell.exe',
-    ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', hotkeyScriptPath(), '-Mode', mode],
-    { windowsHide: true }
-  )
-  hotkeyHook = child
-  child.stdout.setEncoding('utf8')
-  child.stdout.on('data', (chunk: string) => {
-    for (const line of chunk.split(/\r?\n/)) {
-      const down = line.trim().match(/^DOWN(?:\s+(\d+))?(?:\s+(\d+))?$/)
-      if (down) startRecording(Number(down[1] || 0), Number(down[2] || 0))
-      if (line.trim() === 'UP') stopRecording()
+function shortcutCaptureScriptPath(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, 'shortcut-capture.ps1')
+    : join(appRoot, 'resources', 'shortcut-capture.ps1')
+}
+
+function captureShortcut(): Promise<{ shortcut: string }> {
+  if (shortcutCapture) throw new Error('正在录入快捷键，请先完成当前操作')
+  stopHotkeyHook()
+  shortcutReady = false
+  broadcastState()
+
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', shortcutCaptureScriptPath()],
+      { windowsHide: true }
+    )
+    shortcutCapture = child
+    child.stdout.setEncoding('utf8')
+    let output = ''
+    let settled = false
+    const finish = (error?: Error, shortcut?: string): void => {
+      if (settled) return
+      settled = true
+      shortcutCapture = null
+      child.kill()
+      void registerShortcut()
+      if (error) reject(error)
+      else resolve({ shortcut: shortcut! })
     }
+    child.stdout.on('data', (chunk: string) => {
+      output += chunk
+      const match = output.match(/SHORTCUT\s+([^\r\n]+)/)
+      if (match) {
+        try {
+          const shortcut = normalizeShortcut(match[1])
+          validateShortcut(shortcut)
+          finish(undefined, shortcut)
+        } catch (error) {
+          finish(error instanceof Error ? error : new Error('不支持这个快捷键'))
+        }
+      }
+      else if (/INVALID/.test(output)) finish(new Error('组合键需要包含 Ctrl、Alt、Shift 或 Win，并搭配一个按键'))
+      else if (/CANCEL/.test(output)) finish(new Error('快捷键录入已超时，请重试'))
+    })
+    child.once('error', () => finish(new Error('无法启动 Windows 快捷键捕获器')))
+    child.once('close', () => {
+      if (!settled) finish(new Error('未捕获到有效快捷键，请重试'))
+    })
   })
-  child.once('spawn', () => {
-    shortcutReady = true
-    broadcastState()
-  })
-  child.once('close', () => {
-    if (hotkeyHook !== child) return
-    hotkeyHook = null
-    shortcutReady = false
-    broadcastState()
-    if (!isQuitting && (settings.shortcut === 'Super+Space' || settings.shortcut === 'Alt+Super')) {
-      setTimeout(startHotkeyHook, 1200)
-    }
-  })
-  child.once('error', () => {
-    if (hotkeyHook !== child) return
-    shortcutReady = false
-    broadcastState()
+}
+
+function startHotkeyHook(shortcut: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', hotkeyScriptPath(), '-Shortcut', shortcut],
+      { windowsHide: true }
+    )
+    hotkeyHook = child
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
+    let ready = false
+    let stderr = ''
+    const readyTimer = setTimeout(() => {
+      if (ready || hotkeyHook !== child) return
+      hotkeyHook = null
+      child.kill()
+      reject(new Error('Windows 快捷键监听器启动超时'))
+    }, 5_000)
+    child.stdout.on('data', (chunk: string) => {
+      for (const line of chunk.split(/\r?\n/)) {
+        const value = line.trim()
+        if (value === 'READY' && !ready) {
+          ready = true
+          clearTimeout(readyTimer)
+          resolve()
+        }
+        const down = value.match(/^DOWN(?:\s+(\d+))?(?:\s+(\d+))?$/)
+        if (down) startRecording(Number(down[1] || 0), Number(down[2] || 0))
+        if (value === 'UP') stopRecording()
+      }
+    })
+    child.stderr.on('data', (chunk: string) => { stderr += chunk })
+    child.once('close', () => {
+      clearTimeout(readyTimer)
+      if (!ready) reject(new Error(stderr.trim() || 'Windows 快捷键监听器启动失败'))
+      if (hotkeyHook !== child) return
+      hotkeyHook = null
+      shortcutReady = false
+      broadcastState()
+      if (!isQuitting) setTimeout(() => void registerShortcut(), 1200)
+    })
+    child.once('error', () => {
+      clearTimeout(readyTimer)
+      if (!ready) reject(new Error('无法启动 Windows 快捷键监听器'))
+      if (hotkeyHook !== child) return
+      hotkeyHook = null
+      shortcutReady = false
+      broadcastState()
+    })
   })
 }
 
@@ -453,14 +569,38 @@ function normalizeShortcut(shortcut: string): string {
     .join('+')
 }
 
-function mergeSettings(next: AppSettings): void {
+function validateShortcut(shortcut: string): void {
+  const parts = shortcut.split('+').filter(Boolean)
+  const modifiers = new Set(['Control', 'Alt', 'Shift', 'Super'])
+  if (parts.length < 2 || !parts.some((part) => modifiers.has(part))) {
+    throw new Error('组合键需要包含 Ctrl、Alt、Shift 或 Win，并搭配一个按键')
+  }
+  const signature = [...parts].sort().join('+')
+  const blocked = new Set([
+    ['Control', 'Alt', 'Delete'].sort().join('+'),
+    ['Alt', 'Tab'].sort().join('+'),
+    ['Alt', 'F4'].sort().join('+'),
+    ['Super', 'L'].sort().join('+'),
+    ['Super', 'U'].sort().join('+')
+  ])
+  if (blocked.has(signature)) throw new Error('这是 Windows 保留快捷键，请换一个组合键')
+  const triggerKeys = parts.filter((part) => !modifiers.has(part))
+  if (!triggerKeys.length && signature !== ['Alt', 'Super'].sort().join('+')) {
+    throw new Error('纯修饰键组合仅支持 Alt + Win')
+  }
+}
+
+async function mergeSettings(next: AppSettings): Promise<void> {
+  const previousSettings = settings
+  const normalizedShortcut = normalizeShortcut(next.shortcut || settings.shortcut)
+  const shortcutChanged = normalizedShortcut !== settings.shortcut || !shortcutReady
   const qwenApiKey = next.qwenApiKey.trim() || settings.qwenApiKey
   const volcanoApiKey = next.volcanoApiKey.trim() || settings.volcanoApiKey
   settings = {
     ...settings,
     ...next,
     provider: next.provider === 'demo' && next.qwenApiKey.trim() ? 'qwen' : next.provider,
-    shortcut: normalizeShortcut(next.shortcut || settings.shortcut),
+    shortcut: normalizedShortcut,
     overlayX: settings.overlayX,
     overlayY: settings.overlayY,
     overlayWidth: Math.min(280, Math.max(44, next.overlayWidth || settings.overlayWidth)),
@@ -469,11 +609,14 @@ function mergeSettings(next: AppSettings): void {
     volcanoAccessKey: next.volcanoAccessKey || settings.volcanoAccessKey,
     dictionary: [...new Set(next.dictionary.map((word) => word.trim()).filter(Boolean))]
   }
+  if (shortcutChanged && !(await registerShortcut())) {
+    settings = previousSettings
+    await registerShortcut()
+    throw new Error('这个快捷键无法启用，请确认组合键有效后重试')
+  }
   updateLoginItemSettings()
-  registerShortcut()
   persist()
   positionOverlay()
-  overlayWindow?.webContents.invalidate()
 }
 
 function updateLoginItemSettings(): void {
@@ -765,10 +908,50 @@ function pasteText(text: string, restoreClipboard = true): void {
   }
 }
 
+const providerLabels: Record<Provider, string> = {
+  demo: '演示模式',
+  qwen: '千问 Qwen3-ASR-Flash',
+  volcano: '火山引擎 BigModel ASR'
+}
+
+function historyExportContent(): { content: string; count: number } {
+  const items = data.history.filter((item) => item.status === 'success' && item.text.trim())
+  const generatedAt = new Date().toLocaleString('zh-CN', { hour12: false })
+  const blocks = items.map((item) => [
+    `## ${new Date(item.createdAt).toLocaleString('zh-CN', { hour12: false })}`,
+    '',
+    `- 模型：${providerLabels[item.provider]}`,
+    `- 时长：${Math.max(1, Math.round(item.durationMs / 1000))} 秒`,
+    '',
+    item.text.trim()
+  ].join('\n'))
+  return {
+    content: `# FlowType 语音识别记录\n\n- 导出时间：${generatedAt}\n- 共 ${items.length} 条\n\n${blocks.join('\n\n---\n\n')}`,
+    count: items.length
+  }
+}
+
+async function exportHistory(): Promise<{ canceled: boolean; path?: string; count: number }> {
+  const { content, count } = historyExportContent()
+  if (!count) throw new Error('还没有可导出的成功识别记录')
+  const date = new Date().toISOString().slice(0, 10)
+  const options = {
+    title: '导出 FlowType 语音识别记录',
+    defaultPath: `FlowType-语音记录-${date}.md`,
+    filters: [{ name: 'Markdown 文档', extensions: ['md'] }]
+  }
+  const result = mainWindow
+    ? await dialog.showSaveDialog(mainWindow, options)
+    : await dialog.showSaveDialog(options)
+  if (result.canceled || !result.filePath) return { canceled: true, count }
+  writeFileSync(result.filePath, content, 'utf8')
+  return { canceled: false, path: result.filePath, count }
+}
+
 function registerIpc(): void {
   ipcMain.handle('state:get', () => getState())
-  ipcMain.handle('settings:save', (_event, next: AppSettings) => {
-    mergeSettings(next)
+  ipcMain.handle('settings:save', async (_event, next: AppSettings) => {
+    await mergeSettings(next)
     broadcastState()
     return getState()
   })
@@ -784,6 +967,7 @@ function registerIpc(): void {
     broadcastState()
     return getState()
   })
+  ipcMain.handle('history:export', exportHistory)
   ipcMain.handle('text:copy', (_event, text: string) => clipboard.writeText(text))
   ipcMain.handle('text:paste-last', () => {
     const last = data.history.find((item) => item.status === 'success')
@@ -813,6 +997,7 @@ function registerIpc(): void {
     }
     throw new Error('请先选择千问或火山识别服务')
   })
+  ipcMain.handle('shortcut:capture', captureShortcut)
   ipcMain.handle('window:open-dashboard', showDashboard)
   ipcMain.handle('overlay:reset-position', () => {
     settings.overlayX = null
@@ -906,7 +1091,7 @@ app.whenReady().then(() => {
   createOverlayWindow()
   createTray()
   registerIpc()
-  registerShortcut()
+  void registerShortcut()
   updateLoginItemSettings()
 
   screen.on('display-metrics-changed', () => positionOverlay())
@@ -921,7 +1106,8 @@ app.on('second-instance', () => {
 app.on('will-quit', () => {
   isQuitting = true
   stopHotkeyHook()
-  globalShortcut.unregisterAll()
+  shortcutCapture?.kill()
+  if (overlayTopMostTimer) clearInterval(overlayTopMostTimer)
 })
 
 app.on('window-all-closed', () => undefined)

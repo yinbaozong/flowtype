@@ -1,6 +1,6 @@
 {
   "name": "flowtype",
-  "version": "0.2.0",
+  "version": "0.3.1",
   "description": "Windows voice dictation utility with a floating recording bar",
   "author": "FlowType",
   "main": "out/main/index.js",
@@ -10,7 +10,10 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "dist": "npm run build && electron-builder --win nsis",
-    "typecheck": "tsc --noEmit"
+    "dist:signed": "npm run build && electron-builder --win nsis -c.win.signAndEditExecutable=true",
+    "typecheck": "tsc --noEmit",
+    "verify:hotkeys": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-hotkeys.ps1",
+    "verify:overlay": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-overlay-shape.ps1"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",
@@ -41,6 +44,10 @@
       {
         "from": "resources/windows-key-hook.ps1",
         "to": "windows-key-hook.ps1"
+      },
+      {
+        "from": "resources/shortcut-capture.ps1",
+        "to": "shortcut-capture.ps1"
       },
       {
         "from": "resources/flowtype-tray.png",

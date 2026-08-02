@@ -654,6 +654,42 @@ select {
   font-weight: 600;
 }
 
+.page-header__actions,
+.shortcut-setting__controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.shortcut-setting {
+  display: grid;
+  gap: 8px;
+}
+
+.shortcut-setting > span {
+  color: #2f333a;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.shortcut-setting__controls kbd {
+  display: inline-flex;
+  min-width: 150px;
+  min-height: 38px;
+  align-items: center;
+  padding: 0 12px;
+  border: 1px solid #d7d9de;
+  border-radius: 9px;
+  background: #fbfbfc;
+  color: #2f333a;
+  font: 600 12px/1 system-ui, sans-serif;
+}
+
+.shortcut-setting small {
+  color: #777c85;
+  font-size: 11px;
+}
+
 .provider-test-button {
   justify-self: start;
 }

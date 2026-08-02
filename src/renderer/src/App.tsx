@@ -7,6 +7,7 @@ import {
   Clock3,
   Command,
   Copy,
+  Download,
   Gauge,
   History,
   Keyboard,
@@ -58,34 +59,6 @@ const providerNames: Record<Provider, string> = {
 
 function formatShortcut(shortcut: string): string {
   return shortcut.replaceAll('Control', 'Ctrl').replaceAll('Super', 'Win')
-}
-
-function shortcutFromEvent(event: React.KeyboardEvent<HTMLInputElement>): string | null {
-  const modifiers: string[] = []
-  if (event.ctrlKey) modifiers.push('Control')
-  if (event.altKey) modifiers.push('Alt')
-  if (event.shiftKey) modifiers.push('Shift')
-  if (event.metaKey) modifiers.push('Super')
-
-  const modifierCodes = new Set(['ControlLeft', 'ControlRight', 'AltLeft', 'AltRight', 'ShiftLeft', 'ShiftRight', 'MetaLeft', 'MetaRight'])
-  if (modifierCodes.has(event.code)) {
-    return event.altKey && event.metaKey ? 'Alt+Super' : null
-  }
-  if (!modifiers.length) return null
-
-  const key =
-    event.code === 'Space'
-      ? 'Space'
-      : event.code.startsWith('Arrow')
-        ? event.code.slice(5)
-      : event.code.startsWith('Key')
-        ? event.code.slice(3)
-        : event.code.startsWith('Digit')
-          ? event.code.slice(5)
-          : event.key.length === 1
-            ? event.key.toUpperCase()
-            : event.key
-  return [...modifiers, key].join('+')
 }
 
 function formatDuration(durationMs: number): string {
@@ -254,6 +227,7 @@ function Overview({
 
 function HistoryPage({ state }: { state: AppState }): React.JSX.Element {
   const [query, setQuery] = useState('')
+  const [exportNotice, setExportNotice] = useState('')
   const filtered = state.history.filter((item) =>
     `${item.text} ${item.error ?? ''}`.toLocaleLowerCase().includes(query.toLocaleLowerCase())
   )
@@ -261,8 +235,19 @@ function HistoryPage({ state }: { state: AppState }): React.JSX.Element {
     <div className="page">
       <header className="page-header">
         <div><p className="date-label">本机记录</p><h1>历史记录</h1></div>
-        {state.history.length ? <button className="secondary-button" onClick={() => window.flowApi.clearHistory()}><Trash2 size={16} /> 清空记录</button> : null}
+        {state.history.length ? (
+          <div className="page-header__actions">
+            <button className="primary-button" onClick={() => {
+              setExportNotice('正在导出…')
+              void window.flowApi.exportHistory()
+                .then((result) => setExportNotice(result.canceled ? '' : `已导出 ${result.count} 条记录`))
+                .catch((error: unknown) => setExportNotice(error instanceof Error ? error.message : '导出失败'))
+            }}><Download size={16} /> 导出 Markdown</button>
+            <button className="secondary-button" onClick={() => window.flowApi.clearHistory()}><Trash2 size={16} /> 清空记录</button>
+          </div>
+        ) : null}
       </header>
+      {exportNotice ? <p className="settings-notice">{exportNotice}</p> : null}
       <div className="search-box"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索识别内容" /></div>
       <section className="section-block history-page-list">
         {filtered.length ? filtered.map((item) => <HistoryRow item={item} key={item.id} onDelete={(id) => window.flowApi.deleteHistory(id)} />) : <div className="empty"><div><Clock3 size={20} /></div><h3>没有找到记录</h3><p>新的语音识别会出现在这里。</p></div>}
@@ -317,6 +302,22 @@ function SettingsPage({
       .then(() => setNotice(`快捷键已生效：${formatShortcut(shortcut)}`))
       .catch((error: unknown) => setNotice(error instanceof Error ? error.message : '快捷键注册失败'))
   }
+  const captureShortcut = async (): Promise<void> => {
+    setCapturingShortcut(true)
+    setNotice('请同时按下新的组合键，松开后自动保存…')
+    try {
+      const result = await window.flowApi.captureShortcut()
+      const next = { ...draft, shortcut: result.shortcut }
+      setDraft(next)
+      setNotice('正在应用快捷键…')
+      await onSave(next)
+      setNotice(`快捷键已生效：${formatShortcut(result.shortcut)}`)
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '快捷键录入失败')
+    } finally {
+      setCapturingShortcut(false)
+    }
+  }
   useEffect(() => setDraft(settings), [settings])
   const update = <K extends keyof AppSettings>(key: K, value: AppSettings[K]): void => setDraft((current) => ({ ...current, [key]: value }))
   const save = async (): Promise<void> => {
@@ -349,31 +350,16 @@ function SettingsPage({
         <div className="settings-fields">
           <label><span>识别服务</span><select value={draft.provider} onChange={(event) => update('provider', event.target.value as Provider)}><option value="demo">演示模式</option><option value="qwen">千问 Qwen3-ASR</option><option value="volcano">火山大模型</option></select></label>
           <label><span>识别语言</span><select value={draft.language} onChange={(event) => update('language', event.target.value as AppSettings['language'])}><option value="auto">自动检测</option><option value="zh">中文</option><option value="en">英文</option><option value="ja">日语</option><option value="yue">粤语</option></select></label>
-          <label>
+          <div className="shortcut-setting">
             <span>全局快捷键</span>
-            <input
-              className="shortcut-capture"
-              readOnly
-              value={capturingShortcut ? '请按下新的组合键…' : formatShortcut(draft.shortcut)}
-              onFocus={() => setCapturingShortcut(true)}
-              onBlur={() => setCapturingShortcut(false)}
-              onKeyDown={(event) => {
-                event.preventDefault()
-                event.stopPropagation()
-                const shortcut = shortcutFromEvent(event)
-                if (!shortcut) return
-                const next = { ...draft, shortcut }
-                setDraft(next)
-                setCapturingShortcut(false)
-                event.currentTarget.blur()
-                setNotice('正在应用快捷键…')
-                void onSave(next)
-                  .then(() => setNotice('快捷键已生效'))
-                  .catch((error: unknown) => setNotice(error instanceof Error ? error.message : '快捷键注册失败'))
-              }}
-            />
-            <small>{draft.shortcut === 'Super+Space' ? 'Win + Space 支持按住说话；其他组合键按一次开始，再按一次结束。' : '当前自定义快捷键按一次开始，再按一次结束。'}</small>
-          </label>
+            <div className="shortcut-setting__controls">
+              <kbd>{formatShortcut(draft.shortcut)}</kbd>
+              <button type="button" className="secondary-button" disabled={capturingShortcut} onClick={() => void captureShortcut()}>
+                {capturingShortcut ? '等待按键…' : '录入新快捷键'}
+              </button>
+            </div>
+            <small>同时按住组合键开始说话，松开任意组成键结束。</small>
+          </div>
           <div className="shortcut-presets">
             <button type="button" className="secondary-button" onClick={() => applyShortcut('Alt+Super')}>Alt + Win（按住说话）</button>
             <button type="button" className="secondary-button" onClick={() => applyShortcut('Super+Space')}>Win + Space（按住说话）</button>

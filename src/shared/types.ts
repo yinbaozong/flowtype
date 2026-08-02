@@ -60,6 +60,7 @@ export interface FlowApi {
   saveSettings: (settings: AppSettings) => Promise<AppState>
   deleteHistory: (id: string) => Promise<AppState>
   clearHistory: () => Promise<AppState>
+  exportHistory: () => Promise<{ canceled: boolean; path?: string; count: number }>
   copyText: (text: string) => Promise<void>
   pasteLast: () => Promise<void>
   transcribe: (request: TranscribeRequest) => Promise<{ text: string }>
@@ -67,6 +68,7 @@ export interface FlowApi {
   cancelRecording: () => Promise<void>
   reportRecordingError: (message: string) => Promise<void>
   testProvider: () => Promise<{ ok: boolean; message: string }>
+  captureShortcut: () => Promise<{ shortcut: string }>
   openDashboard: () => Promise<void>
   resetOverlayPosition: () => Promise<void>
   startOverlayDrag: (x: number, y: number) => void
