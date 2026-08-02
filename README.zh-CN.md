@@ -38,12 +38,12 @@ FlowType 不内置公共云端账号。使用真实语音识别前，需要在�
 普通用户不需要安装 Node.js 或编译源代码：
 
 1. 打开 [GitHub 最新版本](https://github.com/yinbaozong/flowtype/releases/latest)。
-2. 下载 `FlowType.Setup.0.3.1.exe`。
-3. 运行安装程序，并选择安装目录。
+2. 开启 Smart App Control 的电脑请下载 `FlowType.Portable.0.3.2.zip`。
+3. 将 ZIP 完整解压到一个固定目录，然后运行其中的 `FlowType.exe`。
 4. 启动 FlowType，在设置页面配置语音识别服务和 API Key。
 5. 测试接口成功后，录入自己的快捷键。
 
-安装程序会在所选目录中生成 `Uninstall FlowType.exe`。也可以通过“Windows 设置 > 应用”卸载 FlowType。
+免安装版不会修改注册表。删除解压后的程序目录即可卸载；如需同时清除设置和历史记录，再手动删除 `%APPDATA%\FlowType`。使用 NSIS 安装版时，安装目录中会生成 `Uninstall FlowType.exe`。
 
 当前发布包尚未使用受信任的代码签名证书签名，因此 Windows SmartScreen 可能警告，开启 Smart App Control 的电脑也可能直接拦截。请只运行自己信任来源的安装包。
 
@@ -157,9 +157,10 @@ npm run verify:hotkeys
 npm run verify:overlay
 npm run build
 npm run dist
+npm run dist:portable
 ```
 
-安装包会生成到 `release/FlowType Setup 0.3.1.exe`。
+普通安装包会生成到 `release/FlowType Setup 0.3.2.exe`，免安装包会生成到 `release/FlowType Portable 0.3.2.zip`。免安装包保留 Electron 原始主程序的完整字节和文件哈希，FlowType 程序代码位于相邻的 `resources/app.asar` 中。
 
 ## 项目结构
 

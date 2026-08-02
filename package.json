@@ -1,6 +1,6 @@
 {
   "name": "flowtype",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Windows voice dictation utility with a floating recording bar",
   "author": "FlowType",
   "main": "out/main/index.js",
@@ -10,6 +10,7 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "dist": "npm run build && electron-builder --win nsis",
+    "dist:portable": "npm run build && electron-builder --win dir && powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-portable.ps1",
     "dist:signed": "npm run build && electron-builder --win nsis -c.win.signAndEditExecutable=true",
     "typecheck": "tsc --noEmit",
     "verify:hotkeys": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-hotkeys.ps1",

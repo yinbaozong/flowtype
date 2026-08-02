@@ -38,12 +38,12 @@ No cloud account is bundled with the app. Users configure their own speech API k
 Most users should install from GitHub Releases:
 
 1. Open the latest release: https://github.com/yinbaozong/flowtype/releases/latest
-2. Download `FlowType.Setup.0.3.1.exe`.
-3. Run the installer.
+2. On a PC with Smart App Control enabled, download `FlowType.Portable.0.3.2.zip`, extract the complete folder, and run `FlowType.exe`.
+3. On other PCs, you can use the unsigned `FlowType.Setup.0.3.1.exe` installer, but Windows may block it.
 4. If Windows warns that the publisher is unknown, only continue if you trust the downloaded file.
 5. Start FlowType, open Settings, and add your own speech API key.
 
-The NSIS installer creates `Uninstall FlowType.exe` in the selected installation directory. You can also uninstall FlowType from Windows Settings > Apps.
+The portable build does not modify the registry. Remove its extracted folder to uninstall it; settings and history remain under `%APPDATA%\FlowType` unless removed manually. The NSIS installer creates `Uninstall FlowType.exe` in the selected installation directory.
 
 The installer is unsigned. Windows SmartScreen or Smart App Control may warn or block it. That is normal for self-built open-source Windows installers. A public production release should be signed with a trusted code signing certificate.
 
@@ -89,7 +89,13 @@ Build the Windows installer:
 npm run dist
 ```
 
-The installer is written locally to `release/FlowType Setup 0.3.1.exe`. GitHub Releases may display the uploaded asset as `FlowType.Setup.0.3.1.exe`.
+Build the Smart App Control-compatible portable archive used for local unsigned distribution:
+
+```powershell
+npm run dist:portable
+```
+
+The portable archive is written to `release/FlowType Portable 0.3.2.zip`. It keeps the original Electron executable byte-for-byte and packages FlowType in the adjacent `resources/app.asar` file.
 
 ## First Setup
 
