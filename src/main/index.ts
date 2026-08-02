@@ -38,6 +38,7 @@ interface StoredData {
 
 const defaults: AppSettings = {
   provider: 'demo',
+  uiLanguage: 'zh',
   language: 'auto',
   shortcut: 'Super+Space',
   overlayX: null,

@@ -1,6 +1,6 @@
 {
   "name": "flowtype",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "description": "Windows voice dictation utility with a floating recording bar",
   "author": "FlowType",
   "main": "out/main/index.js",
@@ -57,6 +57,10 @@
       {
         "from": "resources/flowtype-icon.png",
         "to": "flowtype-icon.png"
+      },
+      {
+        "from": "resources/flowtype.ico",
+        "to": "flowtype.ico"
       }
     ],
     "win": {

@@ -3,6 +3,7 @@ out/
 release/
 .flowtype-data/
 flowtype-data/
+data-backups/
 .env*
 *.lnk
 *.log

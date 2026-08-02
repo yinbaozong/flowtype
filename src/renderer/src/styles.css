@@ -73,33 +73,10 @@ select {
 }
 
 .brand__mark {
-  display: flex;
-  align-items: center;
-  gap: 2px;
   width: 28px;
   height: 28px;
-  padding: 6px;
   border-radius: 9px;
-  background: var(--ink);
-}
-
-.brand__mark span {
-  width: 2px;
-  height: 8px;
-  border-radius: 99px;
-  background: var(--accent);
-}
-
-.brand__mark span:nth-child(2) {
-  height: 14px;
-}
-
-.brand__mark span:nth-child(3) {
-  height: 11px;
-}
-
-.brand__mark span:nth-child(4) {
-  height: 6px;
+  object-fit: cover;
 }
 
 .sidebar nav {

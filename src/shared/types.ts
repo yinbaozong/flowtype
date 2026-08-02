@@ -3,6 +3,7 @@ export type AppPage = 'overview' | 'history' | 'dictionary' | 'settings'
 
 export interface AppSettings {
   provider: Provider
+  uiLanguage: 'zh' | 'en'
   language: 'auto' | 'zh' | 'en' | 'ja' | 'yue'
   shortcut: string
   overlayX: number | null

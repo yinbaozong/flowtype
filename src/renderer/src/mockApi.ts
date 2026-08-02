@@ -27,6 +27,7 @@ const sampleHistory: HistoryItem[] = [
 let state: AppState = {
   settings: {
     provider: 'demo',
+    uiLanguage: 'zh',
     language: 'auto',
     shortcut: 'Super+Space',
     overlayX: null,
