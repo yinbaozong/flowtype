@@ -1,5 +1,7 @@
 # FlowType
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 Press a hotkey, speak, and let text appear in the app you were already using.
 
 FlowType is a Windows desktop voice dictation tool built with Electron, React, and TypeScript. It stays in the tray, records from a global hotkey, sends audio to a configurable speech model, then pastes the recognized text back into the original input box. Bring your own API key; your history and credentials stay local.
