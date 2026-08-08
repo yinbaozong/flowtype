@@ -26,9 +26,9 @@ FlowType 是一款使用 Electron、React 和 TypeScript 开发的 Windows 桌�
 普通用户不需要安装 Node.js，也不需要编译源代码：
 
 1. 打开 [GitHub 最新版本](https://github.com/yinbaozong/flowtype/releases/latest)。
-2. 同一个 `v0.5.0` Release 中同时提供两种文件。
-3. 免安装版：下载 `FlowType.Portable.0.5.0.zip`，完整解压到固定文件夹，再运行 `FlowType.exe`。
-4. 安装版：下载 `FlowType.Setup.0.5.0.exe`，运行后选择安装位置。
+2. 同一个 `v0.5.1` Release 中同时提供两种文件。
+3. 免安装版：下载 `FlowType.Portable.0.5.1.zip`，完整解压到固定文件夹，再运行 `FlowType.exe`。
+4. 安装版：下载 `FlowType.Setup.0.5.1.exe`，运行后选择安装位置。
 5. 启动 FlowType，在设置页配置语音识别服务、API Key 和快捷键。
 
 免安装版不会修改注册表，删除解压目录即可卸载。安装版会在安装目录中生成 `Uninstall FlowType.exe`。两种版本共用 `%APPDATA%\FlowType` 中的设置和历史记录，因此升级或更换程序目录不会自动删除个人数据。
@@ -122,7 +122,7 @@ npm run dist
 npm run dist:portable
 ```
 
-安装包输出到 `release/FlowType Setup 0.5.0.exe`，免安装包输出到 `release/FlowType Portable 0.5.0.zip`。
+安装包输出到 `release/FlowType Setup 0.5.1.exe`，免安装包输出到 `release/FlowType Portable 0.5.1.zip`。
 
 ## 项目结构
 

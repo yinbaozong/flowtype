@@ -14,7 +14,7 @@ const api: FlowApi = {
   cancelRecording: () => ipcRenderer.invoke('recording:cancel'),
   reportRecordingError: (message: string) => ipcRenderer.invoke('recording:error', message),
   testProvider: () => ipcRenderer.invoke('provider:test'),
-  captureShortcut: () => ipcRenderer.invoke('shortcut:capture'),
+  captureShortcut: (purpose) => ipcRenderer.invoke('shortcut:capture', purpose),
   openDashboard: () => ipcRenderer.invoke('window:open-dashboard'),
   resetOverlayPosition: () => ipcRenderer.invoke('overlay:reset-position'),
   onState: (callback: (state: AppState) => void) => {

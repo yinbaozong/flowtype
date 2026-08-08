@@ -96,7 +96,15 @@ export const mockApi: FlowApi = {
   cancelRecording: async () => undefined,
   reportRecordingError: async () => undefined,
   testProvider: async () => ({ ok: true, message: '连接成功' }),
-  captureShortcut: async () => ({ shortcut: 'Control+Alt+D' }),
+  captureShortcut: async (purpose) => {
+    const shortcut = purpose === 'undo' ? 'Control+Shift+Backspace' : 'Control+Alt+D'
+    state = {
+      ...state,
+      settings: { ...state.settings, [purpose === 'undo' ? 'undoShortcut' : 'shortcut']: shortcut }
+    }
+    emitState()
+    return { shortcut }
+  },
   openDashboard: async () => undefined,
   resetOverlayPosition: async () => undefined,
   onState: (callback) => {

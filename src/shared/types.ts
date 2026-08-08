@@ -71,7 +71,7 @@ export interface FlowApi {
   cancelRecording: () => Promise<void>
   reportRecordingError: (message: string) => Promise<void>
   testProvider: () => Promise<{ ok: boolean; message: string }>
-  captureShortcut: () => Promise<{ shortcut: string }>
+  captureShortcut: (purpose: 'recording' | 'undo') => Promise<{ shortcut: string }>
   openDashboard: () => Promise<void>
   resetOverlayPosition: () => Promise<void>
   onState: (callback: (state: AppState) => void) => () => void

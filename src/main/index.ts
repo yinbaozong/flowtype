@@ -76,7 +76,6 @@ let shortcutCapture: ChildProcessWithoutNullStreams | null = null
 let shortcutReady = false
 let undoAvailable = false
 let lastPasteTargetHwnd = 0
-let lastPasteTargetFocusHwnd = 0
 let maximumRecordingTimer: NodeJS.Timeout | null = null
 let lastProgrammaticOverlayBounds: Electron.Rectangle | null = null
 let overlayMoveTimer: NodeJS.Timeout | null = null
@@ -468,8 +467,10 @@ function captureShortcut(): Promise<{ shortcut: string }> {
       settled = true
       shortcutCapture = null
       child.kill()
-      void registerShortcut()
-      if (error) reject(error)
+      if (error) {
+        void registerShortcut()
+        reject(error)
+      }
       else resolve({ shortcut: shortcut! })
     }
     child.stdout.on('data', (chunk: string) => {
@@ -972,7 +973,6 @@ function pasteText(text: string, restoreClipboard = true): void {
   child.once('close', (code) => {
     if (code !== 0 || !targetHwnd) return
     lastPasteTargetHwnd = targetHwnd
-    lastPasteTargetFocusHwnd = targetFocusHwnd
     undoAvailable = true
   })
   if (restoreClipboard) {
@@ -1001,8 +1001,7 @@ function undoLastVoiceInput(currentHwnd: number, currentFocusHwnd: number): void
   }
 
   undoAvailable = false
-  const targetFocus = lastPasteTargetFocusHwnd || currentFocusHwnd
-  const child = sendKeyboardCommand(lastPasteTargetHwnd, targetFocus, 'undo')
+  const child = sendKeyboardCommand(currentHwnd, currentFocusHwnd, 'undo')
   child.once('close', (code) => {
     if (code !== 0) {
       undoAvailable = true
@@ -1104,7 +1103,21 @@ function registerIpc(): void {
     }
     throw new Error('请先选择千问或火山识别服务')
   })
-  ipcMain.handle('shortcut:capture', captureShortcut)
+  ipcMain.handle('shortcut:capture', async (_event, purpose: 'recording' | 'undo') => {
+    if (purpose !== 'recording' && purpose !== 'undo') throw new Error('未知的快捷键类型')
+    const result = await captureShortcut()
+    try {
+      await mergeSettings({
+        ...settings,
+        [purpose === 'undo' ? 'undoShortcut' : 'shortcut']: result.shortcut
+      })
+      broadcastState()
+      return result
+    } catch (error) {
+      if (!shortcutReady) await registerShortcut()
+      throw error
+    }
+  })
   ipcMain.handle('window:open-dashboard', showDashboard)
   ipcMain.handle('overlay:reset-position', () => {
     settings.overlayX = null

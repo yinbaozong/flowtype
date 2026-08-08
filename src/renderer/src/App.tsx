@@ -342,11 +342,8 @@ function SettingsPage({
     setCapturingShortcut(true)
     setNotice(t('shortcutCapturePrompt'))
     try {
-      const result = await window.flowApi.captureShortcut()
-      const next = { ...draft, shortcut: result.shortcut }
-      setDraft(next)
-      setNotice(t('applyingShortcut'))
-      await onSave(next)
+      const result = await window.flowApi.captureShortcut('recording')
+      setDraft((current) => ({ ...current, shortcut: result.shortcut }))
       setNotice(t('shortcutActive', { shortcut: formatShortcut(result.shortcut) }))
     } catch (error) {
       setNotice(error instanceof Error ? error.message : t('shortcutCaptureFailed'))
@@ -358,11 +355,8 @@ function SettingsPage({
     setCapturingUndoShortcut(true)
     setNotice(t('undoShortcutCapturePrompt'))
     try {
-      const result = await window.flowApi.captureShortcut()
-      const next = { ...draft, undoShortcut: result.shortcut }
-      setDraft(next)
-      setNotice(t('applyingShortcut'))
-      await onSave(next)
+      const result = await window.flowApi.captureShortcut('undo')
+      setDraft((current) => ({ ...current, undoShortcut: result.shortcut }))
       setNotice(t('undoShortcutActive', { shortcut: formatShortcut(result.shortcut) }))
     } catch (error) {
       setNotice(error instanceof Error ? error.message : t('shortcutCaptureFailed'))
