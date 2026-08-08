@@ -41,6 +41,7 @@ const defaults: AppSettings = {
   uiLanguage: 'zh',
   language: 'auto',
   shortcut: 'Super+Space',
+  undoShortcut: 'Control+Alt+Backspace',
   overlayX: null,
   overlayY: null,
   overlayWidth: 64,
@@ -70,8 +71,12 @@ let pasteTargetExpected = false
 let pasteTargetHwnd = 0
 let pasteTargetFocusHwnd = 0
 let hotkeyHook: ChildProcessWithoutNullStreams | null = null
+let undoHotkeyHook: ChildProcessWithoutNullStreams | null = null
 let shortcutCapture: ChildProcessWithoutNullStreams | null = null
 let shortcutReady = false
+let undoAvailable = false
+let lastPasteTargetHwnd = 0
+let lastPasteTargetFocusHwnd = 0
 let maximumRecordingTimer: NodeJS.Timeout | null = null
 let lastProgrammaticOverlayBounds: Electron.Rectangle | null = null
 let overlayMoveTimer: NodeJS.Timeout | null = null
@@ -411,13 +416,19 @@ function updateTrayMenu(): void {
 }
 
 async function registerShortcut(): Promise<boolean> {
-  stopHotkeyHook()
+  stopHotkeyHooks()
   shortcutReady = false
   try {
     validateShortcut(settings.shortcut)
-    await startHotkeyHook(settings.shortcut)
+    validateShortcut(settings.undoShortcut)
+    if (normalizeShortcut(settings.shortcut) === normalizeShortcut(settings.undoShortcut)) {
+      throw new Error('录音快捷键和撤销快捷键不能相同')
+    }
+    await startHotkeyHook(settings.shortcut, 'recording')
+    await startHotkeyHook(settings.undoShortcut, 'undo')
     shortcutReady = true
   } catch {
+    stopHotkeyHooks()
     shortcutReady = false
   }
   broadcastState()
@@ -438,7 +449,7 @@ function shortcutCaptureScriptPath(): string {
 
 function captureShortcut(): Promise<{ shortcut: string }> {
   if (shortcutCapture) throw new Error('正在录入快捷键，请先完成当前操作')
-  stopHotkeyHook()
+  stopHotkeyHooks()
   shortcutReady = false
   broadcastState()
 
@@ -483,21 +494,32 @@ function captureShortcut(): Promise<{ shortcut: string }> {
   })
 }
 
-function startHotkeyHook(shortcut: string): Promise<void> {
+type HotkeyPurpose = 'recording' | 'undo'
+
+function getHotkeyHook(purpose: HotkeyPurpose): ChildProcessWithoutNullStreams | null {
+  return purpose === 'recording' ? hotkeyHook : undoHotkeyHook
+}
+
+function setHotkeyHook(purpose: HotkeyPurpose, child: ChildProcessWithoutNullStreams | null): void {
+  if (purpose === 'recording') hotkeyHook = child
+  else undoHotkeyHook = child
+}
+
+function startHotkeyHook(shortcut: string, purpose: HotkeyPurpose): Promise<void> {
   return new Promise((resolve, reject) => {
     const child = spawn(
       'powershell.exe',
       ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', hotkeyScriptPath(), '-Shortcut', shortcut],
       { windowsHide: true }
     )
-    hotkeyHook = child
+    setHotkeyHook(purpose, child)
     child.stdout.setEncoding('utf8')
     child.stderr.setEncoding('utf8')
     let ready = false
     let stderr = ''
     const readyTimer = setTimeout(() => {
-      if (ready || hotkeyHook !== child) return
-      hotkeyHook = null
+      if (ready || getHotkeyHook(purpose) !== child) return
+      setHotkeyHook(purpose, null)
       child.kill()
       reject(new Error('Windows 快捷键监听器启动超时'))
     }, 5_000)
@@ -510,16 +532,17 @@ function startHotkeyHook(shortcut: string): Promise<void> {
           resolve()
         }
         const down = value.match(/^DOWN(?:\s+(\d+))?(?:\s+(\d+))?$/)
-        if (down) startRecording(Number(down[1] || 0), Number(down[2] || 0))
-        if (value === 'UP') stopRecording()
+        if (down && purpose === 'recording') startRecording(Number(down[1] || 0), Number(down[2] || 0))
+        if (down && purpose === 'undo') undoLastVoiceInput(Number(down[1] || 0), Number(down[2] || 0))
+        if (value === 'UP' && purpose === 'recording') stopRecording()
       }
     })
     child.stderr.on('data', (chunk: string) => { stderr += chunk })
     child.once('close', () => {
       clearTimeout(readyTimer)
       if (!ready) reject(new Error(stderr.trim() || 'Windows 快捷键监听器启动失败'))
-      if (hotkeyHook !== child) return
-      hotkeyHook = null
+      if (getHotkeyHook(purpose) !== child) return
+      setHotkeyHook(purpose, null)
       shortcutReady = false
       broadcastState()
       if (!isQuitting) setTimeout(() => void registerShortcut(), 1200)
@@ -527,18 +550,21 @@ function startHotkeyHook(shortcut: string): Promise<void> {
     child.once('error', () => {
       clearTimeout(readyTimer)
       if (!ready) reject(new Error('无法启动 Windows 快捷键监听器'))
-      if (hotkeyHook !== child) return
-      hotkeyHook = null
+      if (getHotkeyHook(purpose) !== child) return
+      setHotkeyHook(purpose, null)
       shortcutReady = false
       broadcastState()
     })
   })
 }
 
-function stopHotkeyHook(): void {
-  const child = hotkeyHook
+function stopHotkeyHooks(): void {
+  const recordingChild = hotkeyHook
+  const undoChild = undoHotkeyHook
   hotkeyHook = null
-  child?.kill()
+  undoHotkeyHook = null
+  recordingChild?.kill()
+  undoChild?.kill()
 }
 
 function toggleRecording(): void {
@@ -616,7 +642,14 @@ function validateShortcut(shortcut: string): void {
 async function mergeSettings(next: AppSettings): Promise<void> {
   const previousSettings = settings
   const normalizedShortcut = normalizeShortcut(next.shortcut || settings.shortcut)
-  const shortcutChanged = normalizedShortcut !== settings.shortcut || !shortcutReady
+  const normalizedUndoShortcut = normalizeShortcut(next.undoShortcut || settings.undoShortcut)
+  if (normalizedShortcut === normalizedUndoShortcut) {
+    throw new Error('录音快捷键和撤销快捷键不能相同')
+  }
+  const shortcutChanged =
+    normalizedShortcut !== settings.shortcut ||
+    normalizedUndoShortcut !== settings.undoShortcut ||
+    !shortcutReady
   const qwenApiKey = next.qwenApiKey.trim() || settings.qwenApiKey
   const volcanoApiKey = next.volcanoApiKey.trim() || settings.volcanoApiKey
   settings = {
@@ -624,6 +657,7 @@ async function mergeSettings(next: AppSettings): Promise<void> {
     ...next,
     provider: next.provider === 'demo' && next.qwenApiKey.trim() ? 'qwen' : next.provider,
     shortcut: normalizedShortcut,
+    undoShortcut: normalizedUndoShortcut,
     overlayX: settings.overlayX,
     overlayY: settings.overlayY,
     overlayWidth: Math.min(280, Math.max(44, next.overlayWidth || settings.overlayWidth)),
@@ -792,7 +826,11 @@ async function transcribeAudio(request: TranscribeRequest): Promise<string> {
   return '这是一次 FlowType 演示识别。请在设置中配置千问或火山引擎 API Key。'
 }
 
-function sendPaste(targetHwnd = 0, targetFocusHwnd = 0): ChildProcess {
+function sendKeyboardCommand(
+  targetHwnd = 0,
+  targetFocusHwnd = 0,
+  operation: 'paste' | 'undo' = 'paste'
+): ChildProcess {
   const pasteTarget = targetFocusHwnd || targetHwnd
   const command = `
 Add-Type -TypeDefinition @'
@@ -806,6 +844,7 @@ public static class FlowTypePaste {
   private const ushort VK_LWIN = 0x5B;
   private const ushort VK_RWIN = 0x5C;
   private const ushort VK_V = 0x56;
+  private const ushort VK_Z = 0x5A;
   private const uint KEYEVENTF_KEYUP = 0x0002;
   private const uint INPUT_KEYBOARD = 1;
 
@@ -866,6 +905,14 @@ public static class FlowTypePaste {
     SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT)));
   }
 
+  public static void UndoWithKeyboard() {
+    INPUT[] inputs = new INPUT[] {
+      Key(VK_LWIN, true), Key(VK_RWIN, true), Key(VK_MENU, true), Key(VK_SHIFT, true), Key(VK_CONTROL, true),
+      Key(VK_CONTROL, false), Key(VK_Z, false), Key(VK_Z, true), Key(VK_CONTROL, true)
+    };
+    SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT)));
+  }
+
   public static void Paste(IntPtr focus) {
     StringBuilder name = new StringBuilder(128);
     GetClassName(focus, name, name.Capacity);
@@ -909,7 +956,7 @@ public static class FlowTypePaste {
 '@
 [FlowTypePaste]::Activate([IntPtr]${targetHwnd}, [IntPtr]${pasteTarget})
 Start-Sleep -Milliseconds 120
-[FlowTypePaste]::Paste([IntPtr]${pasteTarget})`
+${operation === 'paste' ? `[FlowTypePaste]::Paste([IntPtr]${pasteTarget})` : '[FlowTypePaste]::UndoWithKeyboard()'}`
   const encodedCommand = Buffer.from(command, 'utf16le').toString('base64')
   return spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-EncodedCommand', encodedCommand], {
     windowsHide: true,
@@ -918,8 +965,16 @@ Start-Sleep -Milliseconds 120
 }
 
 function pasteText(text: string, restoreClipboard = true): void {
+  const targetHwnd = pasteTargetHwnd
+  const targetFocusHwnd = pasteTargetFocusHwnd
   clipboard.writeText(text)
-  const child = sendPaste(pasteTargetHwnd, pasteTargetFocusHwnd)
+  const child = sendKeyboardCommand(targetHwnd, targetFocusHwnd)
+  child.once('close', (code) => {
+    if (code !== 0 || !targetHwnd) return
+    lastPasteTargetHwnd = targetHwnd
+    lastPasteTargetFocusHwnd = targetFocusHwnd
+    undoAvailable = true
+  })
   if (restoreClipboard) {
     let restored = false
     const restore = (): void => {
@@ -931,6 +986,33 @@ function pasteText(text: string, restoreClipboard = true): void {
     child.once('error', restore)
     setTimeout(restore, 5_000)
   }
+}
+
+function undoLastVoiceInput(currentHwnd: number, currentFocusHwnd: number): void {
+  if (!undoAvailable || !lastPasteTargetHwnd) {
+    setOverlayState({ mode: 'error', message: '没有可撤销的语音输入' })
+    setTimeout(() => setOverlayState({ mode: 'idle' }), 1400)
+    return
+  }
+  if (currentHwnd !== lastPasteTargetHwnd) {
+    setOverlayState({ mode: 'error', message: '请回到刚才的输入框再撤销' })
+    setTimeout(() => setOverlayState({ mode: 'idle' }), 1800)
+    return
+  }
+
+  undoAvailable = false
+  const targetFocus = lastPasteTargetFocusHwnd || currentFocusHwnd
+  const child = sendKeyboardCommand(lastPasteTargetHwnd, targetFocus, 'undo')
+  child.once('close', (code) => {
+    if (code !== 0) {
+      undoAvailable = true
+      setOverlayState({ mode: 'error', message: '撤销失败，请重试' })
+      setTimeout(() => setOverlayState({ mode: 'idle' }), 1800)
+      return
+    }
+    setOverlayState({ mode: 'success', message: '已撤销上次输入' })
+    setTimeout(() => setOverlayState({ mode: 'idle' }), 900)
+  })
 }
 
 const providerLabels: Record<Provider, string> = {
@@ -1106,7 +1188,7 @@ app.on('second-instance', () => {
 
 app.on('will-quit', () => {
   isQuitting = true
-  stopHotkeyHook()
+  stopHotkeyHooks()
   shortcutCapture?.kill()
   if (overlayTopMostTimer) clearInterval(overlayTopMostTimer)
 })

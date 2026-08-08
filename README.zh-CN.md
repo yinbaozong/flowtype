@@ -13,6 +13,7 @@ FlowType 是一款使用 Electron、React 和 TypeScript 开发的 Windows 桌�
 - 在浏览器、微信、编辑器和笔记软件等 Windows 应用中进行语音输入。
 - 按住组合键开始录音，松开任意组成键结束录音并识别。
 - 支持录入自定义组合快捷键，例如 `Alt + Win`、`Win + Space`、`Ctrl + Alt + D`。
+- 支持单独配置撤销快捷键，一次撤回 FlowType 最近输入的整段文字。
 - 带实时波形反馈的悬浮录音条，可拖动并调整大小。
 - 使用系统原生窗口拖拽，并支持在设置或托盘菜单中隐藏、恢复悬浮条。
 - 支持千问 `qwen3-asr-flash` 和火山大模型语音识别。
@@ -25,9 +26,9 @@ FlowType 是一款使用 Electron、React 和 TypeScript 开发的 Windows 桌�
 普通用户不需要安装 Node.js，也不需要编译源代码：
 
 1. 打开 [GitHub 最新版本](https://github.com/yinbaozong/flowtype/releases/latest)。
-2. 同一个 `v0.4.1` Release 中同时提供两种文件。
-3. 免安装版：下载 `FlowType.Portable.0.4.1.zip`，完整解压到固定文件夹，再运行 `FlowType.exe`。
-4. 安装版：下载 `FlowType.Setup.0.4.1.exe`，运行后选择安装位置。
+2. 同一个 `v0.5.0` Release 中同时提供两种文件。
+3. 免安装版：下载 `FlowType.Portable.0.5.0.zip`，完整解压到固定文件夹，再运行 `FlowType.exe`。
+4. 安装版：下载 `FlowType.Setup.0.5.0.exe`，运行后选择安装位置。
 5. 启动 FlowType，在设置页配置语音识别服务、API Key 和快捷键。
 
 免安装版不会修改注册表，删除解压目录即可卸载。安装版会在安装目录中生成 `Uninstall FlowType.exe`。两种版本共用 `%APPDATA%\FlowType` 中的设置和历史记录，因此升级或更换程序目录不会自动删除个人数据。
@@ -121,7 +122,7 @@ npm run dist
 npm run dist:portable
 ```
 
-安装包输出到 `release/FlowType Setup 0.4.1.exe`，免安装包输出到 `release/FlowType Portable 0.4.1.zip`。
+安装包输出到 `release/FlowType Setup 0.5.0.exe`，免安装包输出到 `release/FlowType Portable 0.5.0.zip`。
 
 ## 项目结构
 

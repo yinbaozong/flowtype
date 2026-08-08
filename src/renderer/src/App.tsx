@@ -36,6 +36,7 @@ const emptyState: AppState = {
     uiLanguage: 'zh',
     language: 'auto',
     shortcut: 'Super+Space',
+    undoShortcut: 'Control+Alt+Backspace',
     overlayX: null,
     overlayY: null,
     overlayWidth: 64,
@@ -327,6 +328,7 @@ function SettingsPage({
   const [notice, setNotice] = useState('')
   const [testing, setTesting] = useState(false)
   const [capturingShortcut, setCapturingShortcut] = useState(false)
+  const [capturingUndoShortcut, setCapturingUndoShortcut] = useState(false)
   const update = <K extends keyof AppSettings>(key: K, value: AppSettings[K]): void => setDraft((current) => ({ ...current, [key]: value }))
   const applyShortcut = (shortcut: string): void => {
     const next = { ...draft, shortcut }
@@ -350,6 +352,22 @@ function SettingsPage({
       setNotice(error instanceof Error ? error.message : t('shortcutCaptureFailed'))
     } finally {
       setCapturingShortcut(false)
+    }
+  }
+  const captureUndoShortcut = async (): Promise<void> => {
+    setCapturingUndoShortcut(true)
+    setNotice(t('undoShortcutCapturePrompt'))
+    try {
+      const result = await window.flowApi.captureShortcut()
+      const next = { ...draft, undoShortcut: result.shortcut }
+      setDraft(next)
+      setNotice(t('applyingShortcut'))
+      await onSave(next)
+      setNotice(t('undoShortcutActive', { shortcut: formatShortcut(result.shortcut) }))
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : t('shortcutCaptureFailed'))
+    } finally {
+      setCapturingUndoShortcut(false)
     }
   }
   useEffect(() => setDraft(settings), [settings])
@@ -405,6 +423,14 @@ function SettingsPage({
           <div className="shortcut-presets">
             <button type="button" className="secondary-button" onClick={() => applyShortcut('Alt+Super')}>Alt + Win ({t('holdToTalk')})</button>
             <button type="button" className="secondary-button" onClick={() => applyShortcut('Super+Space')}>Win + Space ({t('holdToTalk')})</button>
+          </div>
+          <div className="shortcut-setting">
+            <span>{t('undoShortcut')}</span>
+            <div className="shortcut-setting__controls">
+              <kbd>{formatShortcut(draft.undoShortcut)}</kbd>
+              <button type="button" className="secondary-button" disabled={capturingUndoShortcut} onClick={() => void captureUndoShortcut()}>{capturingUndoShortcut ? t('waitingForKeys') : t('captureUndoShortcut')}</button>
+            </div>
+            <small>{t('undoShortcutHint')}</small>
           </div>
           <label>
             <span>{t('overlayWidth', { width: draft.overlayWidth })}</span>

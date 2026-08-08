@@ -20,6 +20,7 @@ $keys = @{
   Shift = [byte]0x10
   Super = [byte]0x5B
   Space = [byte]0x20
+  Backspace = [byte]0x08
   D = [byte]0x44
 }
 
@@ -81,4 +82,5 @@ function Test-Capture {
 Test-Shortcut 'Alt+Super'
 Test-Shortcut 'Super+Space'
 Test-Shortcut 'Control+Alt+D'
+Test-Shortcut 'Control+Alt+Backspace'
 Test-Capture

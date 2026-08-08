@@ -30,6 +30,7 @@ let state: AppState = {
     uiLanguage: 'zh',
     language: 'auto',
     shortcut: 'Super+Space',
+    undoShortcut: 'Control+Alt+Backspace',
     overlayX: null,
     overlayY: null,
     overlayWidth: 64,

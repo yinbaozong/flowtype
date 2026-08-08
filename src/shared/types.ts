@@ -6,6 +6,7 @@ export interface AppSettings {
   uiLanguage: 'zh' | 'en'
   language: 'auto' | 'zh' | 'en' | 'ja' | 'yue'
   shortcut: string
+  undoShortcut: string
   overlayX: number | null
   overlayY: number | null
   overlayWidth: number
