@@ -65,7 +65,11 @@ Start-Sleep -Seconds 2
 $oldDataDir = $env:FLOWTYPE_DATA_DIR
 $env:FLOWTYPE_DATA_DIR = Join-Path $env:TEMP ('FlowTypeShape-' + [guid]::NewGuid().ToString('N'))
 $arguments = if ([System.IO.Path]::GetFileName($resolvedApp) -eq 'electron.exe') { @($projectRoot) } else { @() }
-$app = Start-Process -FilePath $resolvedApp -ArgumentList $arguments -PassThru
+$app = if ($arguments.Count) {
+  Start-Process -FilePath $resolvedApp -ArgumentList $arguments -PassThru
+} else {
+  Start-Process -FilePath $resolvedApp -PassThru
+}
 try {
   Start-Sleep -Seconds 5
   if (!(Get-Process -Id $app.Id -ErrorAction SilentlyContinue)) { throw 'Packaged FlowType exited during shape test' }

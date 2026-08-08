@@ -15,6 +15,7 @@ FlowType is a Windows desktop voice dictation tool built with Electron, React, a
 - System-wide voice input for Windows, not just a demo inside one textbox.
 - Hold-to-talk workflow: press, speak, release, paste.
 - Floating recording bar with waveform feedback and draggable position.
+- Reliable native window dragging plus a persistent hide/show control for screen recording.
 - Native custom shortcut capture with hold-to-talk behavior for every supported combination.
 - Works with Qwen `qwen3-asr-flash` and Volcano BigModel ASR.
 - Local history with Markdown export, daily stats, personal dictionary, and language selection.
@@ -37,7 +38,7 @@ No cloud account is bundled with the app. Users configure their own speech API k
 Most users should install from GitHub Releases:
 
 1. Open the latest release: https://github.com/yinbaozong/flowtype/releases/latest
-2. The same `v0.4.0` release contains both downloads: `FlowType.Portable.0.4.0.zip` for portable use and `FlowType.Setup.0.4.0.exe` for normal installation.
+2. The same `v0.4.1` release contains both downloads: `FlowType.Portable.0.4.1.zip` for portable use and `FlowType.Setup.0.4.1.exe` for normal installation.
 3. For the portable build, extract the complete ZIP to a fixed folder and run `FlowType.exe`. For the installer, run the EXE and choose an installation directory.
 4. If Windows warns that the publisher is unknown, only continue if you trust the downloaded file.
 5. Start FlowType, open Settings, and add your own speech API key.
@@ -94,7 +95,7 @@ Build the Smart App Control-compatible portable archive used for local unsigned 
 npm run dist:portable
 ```
 
-The portable archive is written to `release/FlowType Portable 0.4.0.zip`. It keeps the original Electron executable byte-for-byte and packages FlowType in the adjacent `resources/app.asar` file. The installer is written to `release/FlowType Setup 0.4.0.exe`.
+The portable archive is written to `release/FlowType Portable 0.4.1.zip`. It keeps the original Electron executable byte-for-byte and packages FlowType in the adjacent `resources/app.asar` file. The installer is written to `release/FlowType Setup 0.4.1.exe`.
 
 ## First Setup
 
@@ -214,6 +215,8 @@ These commands are expected to pass before publishing changes:
 npm run typecheck
 npm run verify:hotkeys
 npm run verify:overlay
+npm run verify:overlay-drag
+npm run verify:overlay-visibility
 npm run build
 npm run dist
 ```
@@ -222,6 +225,8 @@ Current local verification:
 
 - `verify:hotkeys`: validates native capture, hold/release events, and modifier cleanup
 - `verify:overlay`: validates the native pill-shaped window region and confirms outside pixels are clipped
+- `verify:overlay-drag`: performs six real mouse drags and checks movement plus stable width
+- `verify:overlay-visibility`: verifies persisted visible and hidden startup states
 
 ## Important Windows Note
 

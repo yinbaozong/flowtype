@@ -10,26 +10,6 @@ export function Overlay(): React.JSX.Element {
   const [level, setLevel] = useState(previewRecording ? 0.72 : 0.08)
   const [phase, setPhase] = useState(0)
   const recorder = useRef(new AudioRecorder())
-  const dragging = useRef(false)
-  const dragProps = {
-    onPointerDown: (event: React.PointerEvent<HTMLElement>): void => {
-      dragging.current = true
-      event.currentTarget.setPointerCapture(event.pointerId)
-      window.flowApi.startOverlayDrag(event.screenX, event.screenY)
-    },
-    onPointerMove: (event: React.PointerEvent<HTMLElement>): void => {
-      if (dragging.current) window.flowApi.moveOverlayDrag(event.screenX, event.screenY)
-    },
-    onPointerUp: (event: React.PointerEvent<HTMLElement>): void => {
-      dragging.current = false
-      event.currentTarget.releasePointerCapture(event.pointerId)
-      window.flowApi.endOverlayDrag()
-    },
-    onPointerCancel: (): void => {
-      dragging.current = false
-      window.flowApi.endOverlayDrag()
-    }
-  }
 
   useEffect(() => window.flowApi.onOverlayState(setState), [])
   useEffect(() => window.flowApi.onAudioLevel(setLevel), [])
@@ -87,11 +67,11 @@ export function Overlay(): React.JSX.Element {
   )
 
   if (state.mode === 'idle') {
-    return <div className="idle-pill" aria-label="拖动 FlowType 悬浮条" {...dragProps}><span /></div>
+    return <div className="idle-pill" aria-label="拖动 FlowType 悬浮条"><span /></div>
   }
 
   return (
-    <div className={`flow-bar flow-bar--${state.mode}`} {...dragProps}>
+    <div className={`flow-bar flow-bar--${state.mode}`}>
       <div className="waveform" aria-hidden="true">
         {bars.map((height, index) => (
           <i key={index} style={{ height: `${Math.max(2, height * 24)}px` }} />

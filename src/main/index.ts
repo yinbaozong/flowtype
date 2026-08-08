@@ -44,6 +44,7 @@ const defaults: AppSettings = {
   overlayX: null,
   overlayY: null,
   overlayWidth: 64,
+  overlayVisible: true,
   launchAtStartup: true,
   qwenApiKey: '',
   volcanoApiKey: '',
@@ -75,7 +76,6 @@ let maximumRecordingTimer: NodeJS.Timeout | null = null
 let lastProgrammaticOverlayBounds: Electron.Rectangle | null = null
 let overlayMoveTimer: NodeJS.Timeout | null = null
 let overlayTopMostTimer: NodeJS.Timeout | null = null
-let overlayDragOffset: { x: number; y: number } | null = null
 
 const preferredDataPath =
   process.env.FLOWTYPE_DATA_DIR ||
@@ -184,15 +184,24 @@ function setOverlayState(state: OverlayState): void {
   overlayState = state
   positionOverlay(state.mode)
   overlayWindow?.webContents.send('overlay:state', state)
-  overlayWindow?.showInactive()
-  enforceOverlayTopMost()
+  syncOverlayVisibility()
 }
 
 function enforceOverlayTopMost(): void {
-  if (!overlayWindow || overlayWindow.isDestroyed()) return
+  if (!settings.overlayVisible || !overlayWindow || overlayWindow.isDestroyed()) return
   overlayWindow.setAlwaysOnTop(true, 'screen-saver', 1)
   overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
   overlayWindow.moveTop()
+}
+
+function syncOverlayVisibility(): void {
+  if (!overlayWindow || overlayWindow.isDestroyed()) return
+  if (!settings.overlayVisible) {
+    overlayWindow.hide()
+    return
+  }
+  overlayWindow.showInactive()
+  enforceOverlayTopMost()
 }
 
 function roundedOverlayShape(width: number, mode: OverlayState['mode']): Electron.Rectangle[] {
@@ -331,7 +340,6 @@ function createOverlayWindow(): void {
   overlayWindow.setTitle('')
   overlayWindow.setVisibleOnAllWorkspaces(true)
   overlayWindow.on('moved', () => {
-    if (overlayDragOffset) return
     if (overlayMoveTimer) clearTimeout(overlayMoveTimer)
     overlayMoveTimer = setTimeout(saveOverlayPosition, 180)
   })
@@ -342,8 +350,7 @@ function createOverlayWindow(): void {
   })
   overlayWindow.once('ready-to-show', () => {
     positionOverlay()
-    overlayWindow?.showInactive()
-    enforceOverlayTopMost()
+    syncOverlayVisibility()
   })
   loadWindow(overlayWindow, '#overlay')
   overlayTopMostTimer = setInterval(enforceOverlayTopMost, 1500)
@@ -371,10 +378,26 @@ function showDashboard(): void {
 function createTray(): void {
   tray = new Tray(trayIcon().resize({ width: 20, height: 20 }))
   tray.setToolTip('FlowType 语音输入')
+  updateTrayMenu()
+  tray.on('click', showDashboard)
+}
+
+function updateTrayMenu(): void {
+  if (!tray) return
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: '打开 FlowType', click: showDashboard },
       { label: '开始 / 停止识别', click: toggleRecording },
+      {
+        label: settings.overlayVisible ? '隐藏悬浮条' : '显示悬浮条',
+        click: () => {
+          settings.overlayVisible = !settings.overlayVisible
+          persist()
+          syncOverlayVisibility()
+          updateTrayMenu()
+          broadcastState()
+        }
+      },
       { type: 'separator' },
       {
         label: '退出',
@@ -385,7 +408,6 @@ function createTray(): void {
       }
     ])
   )
-  tray.on('click', showDashboard)
 }
 
 async function registerShortcut(): Promise<boolean> {
@@ -618,6 +640,8 @@ async function mergeSettings(next: AppSettings): Promise<void> {
   updateLoginItemSettings()
   persist()
   positionOverlay()
+  syncOverlayVisibility()
+  updateTrayMenu()
 }
 
 function updateLoginItemSettings(): void {
@@ -1005,30 +1029,6 @@ function registerIpc(): void {
     settings.overlayY = null
     persist()
     positionOverlay()
-  })
-  ipcMain.on('overlay:drag-start', (_event, x: number, y: number) => {
-    if (!overlayWindow || overlayWindow.isDestroyed()) return
-    if (overlayMoveTimer) clearTimeout(overlayMoveTimer)
-    overlayMoveTimer = null
-    const bounds = overlayWindow.getBounds()
-    overlayDragOffset = { x: x - bounds.x, y: y - bounds.y }
-  })
-  ipcMain.on('overlay:drag-move', (_event, x: number, y: number) => {
-    if (!overlayWindow || overlayWindow.isDestroyed() || !overlayDragOffset) return
-    const display = screen.getDisplayNearestPoint({ x, y })
-    const workArea = display.workArea
-    const width = Math.min(280, Math.max(44, settings.overlayWidth))
-    const height = 51
-    const nextX = Math.round(Math.min(workArea.x + workArea.width - width, Math.max(workArea.x, x - overlayDragOffset.x)))
-    const nextY = Math.round(Math.min(workArea.y + workArea.height - height, Math.max(workArea.y, y - overlayDragOffset.y)))
-    overlayWindow.setBounds({ x: nextX, y: nextY, width, height }, false)
-  })
-  ipcMain.on('overlay:drag-end', () => {
-    overlayDragOffset = null
-    if (overlayMoveTimer) clearTimeout(overlayMoveTimer)
-    overlayMoveTimer = null
-    lastProgrammaticOverlayBounds = null
-    saveOverlayPosition()
   })
   ipcMain.on('audio:level', (_event, level: number) => {
     overlayWindow?.webContents.send('audio:level', level)

@@ -1,6 +1,6 @@
 {
   "name": "flowtype",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Windows voice dictation utility with a floating recording bar",
   "author": "FlowType",
   "main": "out/main/index.js",
@@ -14,7 +14,9 @@
     "dist:signed": "npm run build && electron-builder --win nsis -c.win.signAndEditExecutable=true",
     "typecheck": "tsc --noEmit",
     "verify:hotkeys": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-hotkeys.ps1",
-    "verify:overlay": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-overlay-shape.ps1"
+    "verify:overlay": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-overlay-shape.ps1",
+    "verify:overlay-drag": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-overlay-drag.ps1",
+    "verify:overlay-visibility": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-overlay-visibility.ps1"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",

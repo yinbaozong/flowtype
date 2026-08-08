@@ -17,9 +17,6 @@ const api: FlowApi = {
   captureShortcut: () => ipcRenderer.invoke('shortcut:capture'),
   openDashboard: () => ipcRenderer.invoke('window:open-dashboard'),
   resetOverlayPosition: () => ipcRenderer.invoke('overlay:reset-position'),
-  startOverlayDrag: (x: number, y: number) => ipcRenderer.send('overlay:drag-start', x, y),
-  moveOverlayDrag: (x: number, y: number) => ipcRenderer.send('overlay:drag-move', x, y),
-  endOverlayDrag: () => ipcRenderer.send('overlay:drag-end'),
   onState: (callback: (state: AppState) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, state: AppState): void => callback(state)
     ipcRenderer.on('state:changed', listener)

@@ -766,6 +766,13 @@ select {
   font-size: 11px;
 }
 
+.overlay-position-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .idle-pill {
   align-self: center;
   justify-self: center;
@@ -855,6 +862,18 @@ select {
 .overlay-document #root {
   display: grid;
   place-items: center;
+}
+
+.idle-pill,
+.flow-bar {
+  -webkit-app-region: drag;
+  cursor: grab;
+  user-select: none;
+}
+
+.idle-pill:active,
+.flow-bar:active {
+  cursor: grabbing;
 }
 
 @keyframes thinking {

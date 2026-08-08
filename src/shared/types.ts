@@ -9,6 +9,7 @@ export interface AppSettings {
   overlayX: number | null
   overlayY: number | null
   overlayWidth: number
+  overlayVisible: boolean
   launchAtStartup: boolean
   qwenApiKey: string
   volcanoApiKey: string
@@ -72,9 +73,6 @@ export interface FlowApi {
   captureShortcut: () => Promise<{ shortcut: string }>
   openDashboard: () => Promise<void>
   resetOverlayPosition: () => Promise<void>
-  startOverlayDrag: (x: number, y: number) => void
-  moveOverlayDrag: (x: number, y: number) => void
-  endOverlayDrag: () => void
   onState: (callback: (state: AppState) => void) => () => void
   onRecordingCommand: (callback: (command: 'start' | 'stop' | 'cancel') => void) => () => void
   onOverlayState: (callback: (state: OverlayState) => void) => () => void

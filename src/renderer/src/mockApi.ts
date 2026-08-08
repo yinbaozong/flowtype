@@ -33,6 +33,7 @@ let state: AppState = {
     overlayX: null,
     overlayY: null,
     overlayWidth: 64,
+    overlayVisible: true,
     launchAtStartup: true,
     qwenApiKey: '',
     volcanoApiKey: '',
@@ -97,9 +98,6 @@ export const mockApi: FlowApi = {
   captureShortcut: async () => ({ shortcut: 'Control+Alt+D' }),
   openDashboard: async () => undefined,
   resetOverlayPosition: async () => undefined,
-  startOverlayDrag: () => undefined,
-  moveOverlayDrag: () => undefined,
-  endOverlayDrag: () => undefined,
   onState: (callback) => {
     stateListeners.add(callback)
     return () => stateListeners.delete(callback)

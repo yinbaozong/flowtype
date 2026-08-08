@@ -39,6 +39,7 @@ const emptyState: AppState = {
     overlayX: null,
     overlayY: null,
     overlayWidth: 64,
+    overlayVisible: true,
     launchAtStartup: true,
     qwenApiKey: '',
     volcanoApiKey: '',
@@ -416,7 +417,14 @@ function SettingsPage({
           </label>
           <div className="overlay-position-setting">
             <span><strong>{t('overlayPosition')}</strong><small>{t('overlayPositionHint')}</small></span>
-            <button className="secondary-button" onClick={() => void window.flowApi.resetOverlayPosition()}>{t('resetPosition')}</button>
+            <div className="overlay-position-actions">
+              <button className="secondary-button" onClick={() => void window.flowApi.resetOverlayPosition()}>{t('resetPosition')}</button>
+              <button className="secondary-button" onClick={() => {
+                const next = { ...draft, overlayVisible: !draft.overlayVisible }
+                setDraft(next)
+                void onSave(next)
+              }}>{draft.overlayVisible ? t('hideOverlay') : t('showOverlay')}</button>
+            </div>
           </div>
           <label className="toggle-row"><span><strong>{t('launchAtStartup')}</strong><small>{t('launchAtStartupHint')}</small></span><input type="checkbox" checked={draft.launchAtStartup} onChange={(event) => update('launchAtStartup', event.target.checked)} /></label>
         </div>
