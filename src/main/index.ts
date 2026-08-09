@@ -6,6 +6,7 @@ import {
   ipcMain,
   Menu,
   nativeImage,
+  powerMonitor,
   safeStorage,
   screen,
   session,
@@ -13,7 +14,7 @@ import {
 } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type {
   AppSettings,
@@ -80,6 +81,10 @@ let maximumRecordingTimer: NodeJS.Timeout | null = null
 let lastProgrammaticOverlayBounds: Electron.Rectangle | null = null
 let overlayMoveTimer: NodeJS.Timeout | null = null
 let overlayTopMostTimer: NodeJS.Timeout | null = null
+let overlayHealthTimer: NodeJS.Timeout | null = null
+let recoveryTimer: NodeJS.Timeout | null = null
+let recoveryInProgress = false
+let lastOverlayHeartbeatAt = 0
 
 const preferredDataPath =
   process.env.FLOWTYPE_DATA_DIR ||
@@ -87,6 +92,18 @@ const preferredDataPath =
 app.setPath('userData', preferredDataPath)
 
 const dataPath = (): string => join(app.getPath('userData'), 'flowtype-data.json')
+
+function logRuntime(event: string, detail = ''): void {
+  try {
+    appendFileSync(
+      join(app.getPath('userData'), 'flowtype-runtime.log'),
+      `${new Date().toISOString()} ${event}${detail ? ` ${detail}` : ''}\n`,
+      'utf8'
+    )
+  } catch {
+    // Recovery must not fail because diagnostic logging is unavailable.
+  }
+}
 
 function encrypt(value: string): string {
   if (!value) return ''
@@ -314,6 +331,7 @@ function createMainWindow(): void {
 }
 
 function createOverlayWindow(): void {
+  if (overlayTopMostTimer) clearInterval(overlayTopMostTimer)
   overlayWindow = new BrowserWindow({
     width: 64,
     height: 51,
@@ -349,6 +367,7 @@ function createOverlayWindow(): void {
   })
   overlayWindow.on('show', enforceOverlayTopMost)
   overlayWindow.webContents.on('did-finish-load', () => {
+    lastOverlayHeartbeatAt = Date.now()
     positionOverlay()
     overlayWindow?.webContents.send('overlay:state', overlayState)
   })
@@ -356,9 +375,77 @@ function createOverlayWindow(): void {
     positionOverlay()
     syncOverlayVisibility()
   })
+  overlayWindow.webContents.on('render-process-gone', (_event, details) => {
+    if (recoveryInProgress || isQuitting) return
+    logRuntime('overlay-renderer-gone', details.reason)
+    scheduleRuntimeRecovery('renderer-gone', 500)
+  })
   loadWindow(overlayWindow, '#overlay')
   overlayTopMostTimer = setInterval(enforceOverlayTopMost, 1500)
   overlayTopMostTimer.unref()
+}
+
+function resetTransientRecordingState(): void {
+  if (maximumRecordingTimer) clearTimeout(maximumRecordingTimer)
+  maximumRecordingTimer = null
+  recording = false
+  pasteTargetExpected = false
+  pasteTargetHwnd = 0
+  pasteTargetFocusHwnd = 0
+  overlayState = { mode: 'idle' }
+}
+
+function prepareForPowerTransition(reason: string): void {
+  logRuntime('power-transition-start', reason)
+  if (recoveryTimer) clearTimeout(recoveryTimer)
+  recoveryTimer = null
+  overlayWindow?.webContents.send('recording:command', 'cancel')
+  resetTransientRecordingState()
+  stopHotkeyHooks()
+  shortcutReady = false
+  setOverlayState({ mode: 'idle' })
+  broadcastState()
+}
+
+function scheduleRuntimeRecovery(reason: string, delay = 1_200): void {
+  if (isQuitting) return
+  if (recoveryTimer) clearTimeout(recoveryTimer)
+  recoveryTimer = setTimeout(() => void recoverRuntime(reason), delay)
+}
+
+async function recoverRuntime(reason: string): Promise<void> {
+  if (isQuitting || recoveryInProgress) return
+  recoveryInProgress = true
+  recoveryTimer = null
+  logRuntime('runtime-recovery-start', reason)
+  try {
+    resetTransientRecordingState()
+    stopHotkeyHooks()
+    if (overlayWindow && !overlayWindow.isDestroyed()) overlayWindow.destroy()
+    overlayWindow = null
+    createOverlayWindow()
+    const hooksReady = await registerShortcut()
+    broadcastState()
+    logRuntime('runtime-recovery-complete', `${reason} hooks=${hooksReady}`)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    logRuntime('runtime-recovery-failed', `${reason} ${message}`)
+    scheduleRuntimeRecovery('retry-after-failure', 3_000)
+  } finally {
+    recoveryInProgress = false
+  }
+}
+
+function startOverlayHealthMonitor(): void {
+  if (overlayHealthTimer) clearInterval(overlayHealthTimer)
+  overlayHealthTimer = setInterval(() => {
+    if (!settings.overlayVisible || recoveryInProgress || !overlayWindow || overlayWindow.isDestroyed()) return
+    if (Date.now() - lastOverlayHeartbeatAt > 12_000) {
+      logRuntime('overlay-heartbeat-timeout')
+      scheduleRuntimeRecovery('heartbeat-timeout', 200)
+    }
+  }, 4_000)
+  overlayHealthTimer.unref()
 }
 
 function trayIcon(): Electron.NativeImage {
@@ -543,6 +630,7 @@ function startHotkeyHook(shortcut: string, purpose: HotkeyPurpose): Promise<void
       clearTimeout(readyTimer)
       if (!ready) reject(new Error(stderr.trim() || 'Windows 快捷键监听器启动失败'))
       if (getHotkeyHook(purpose) !== child) return
+      logRuntime('hotkey-hook-closed', purpose)
       setHotkeyHook(purpose, null)
       shortcutReady = false
       broadcastState()
@@ -552,6 +640,7 @@ function startHotkeyHook(shortcut: string, purpose: HotkeyPurpose): Promise<void
       clearTimeout(readyTimer)
       if (!ready) reject(new Error('无法启动 Windows 快捷键监听器'))
       if (getHotkeyHook(purpose) !== child) return
+      logRuntime('hotkey-hook-error', purpose)
       setHotkeyHook(purpose, null)
       shortcutReady = false
       broadcastState()
@@ -1082,6 +1171,7 @@ function registerIpc(): void {
   ipcMain.handle('recording:toggle', toggleRecording)
   ipcMain.handle('recording:cancel', cancelRecording)
   ipcMain.handle('recording:error', (_event, message: string) => {
+    logRuntime('recording-error', message.replace(/[\r\n]+/g, ' ').slice(0, 300))
     if (maximumRecordingTimer) clearTimeout(maximumRecordingTimer)
     maximumRecordingTimer = null
     recording = false
@@ -1128,6 +1218,9 @@ function registerIpc(): void {
   ipcMain.on('audio:level', (_event, level: number) => {
     overlayWindow?.webContents.send('audio:level', level)
   })
+  ipcMain.on('overlay:heartbeat', () => {
+    lastOverlayHeartbeatAt = Date.now()
+  })
   ipcMain.handle('audio:transcribe', async (_event, request: TranscribeRequest) => {
     try {
       const text = await transcribeAudio(request)
@@ -1153,6 +1246,7 @@ function registerIpc(): void {
       return { text }
     } catch (error) {
       const message = error instanceof Error ? error.message : '识别失败'
+      logRuntime('transcription-error', message.replace(/[\r\n]+/g, ' ').slice(0, 300))
       data.history.unshift({
         id: randomUUID(),
         text: '',
@@ -1189,6 +1283,12 @@ app.whenReady().then(() => {
   registerIpc()
   void registerShortcut()
   updateLoginItemSettings()
+  startOverlayHealthMonitor()
+
+  powerMonitor.on('suspend', () => prepareForPowerTransition('suspend'))
+  powerMonitor.on('lock-screen', () => prepareForPowerTransition('lock-screen'))
+  powerMonitor.on('resume', () => scheduleRuntimeRecovery('resume'))
+  powerMonitor.on('unlock-screen', () => scheduleRuntimeRecovery('unlock-screen'))
 
   screen.on('display-metrics-changed', () => positionOverlay())
   screen.on('display-added', () => positionOverlay())
@@ -1204,6 +1304,8 @@ app.on('will-quit', () => {
   stopHotkeyHooks()
   shortcutCapture?.kill()
   if (overlayTopMostTimer) clearInterval(overlayTopMostTimer)
+  if (overlayHealthTimer) clearInterval(overlayHealthTimer)
+  if (recoveryTimer) clearTimeout(recoveryTimer)
 })
 
 app.on('window-all-closed', () => undefined)

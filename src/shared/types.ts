@@ -78,5 +78,6 @@ export interface FlowApi {
   onRecordingCommand: (callback: (command: 'start' | 'stop' | 'cancel') => void) => () => void
   onOverlayState: (callback: (state: OverlayState) => void) => () => void
   sendAudioLevel: (level: number) => void
+  reportOverlayHeartbeat: () => void
   onAudioLevel: (callback: (level: number) => void) => () => void
 }

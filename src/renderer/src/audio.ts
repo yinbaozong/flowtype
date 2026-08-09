@@ -125,6 +125,9 @@ export class AudioRecorder {
   }
 
   private async ensureAudio(): Promise<void> {
+    const track = this.stream?.getAudioTracks()[0]
+    if (this.stream && (!track || track.readyState !== 'live')) await this.disposeAudio()
+    if (this.context?.state === 'closed') await this.disposeAudio()
     if (!this.stream) {
       this.stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -137,6 +140,19 @@ export class AudioRecorder {
     }
     if (!this.context) this.context = new AudioContext()
     if (!this.source) this.source = this.context.createMediaStreamSource(this.stream)
+  }
+
+  private async disposeAudio(): Promise<void> {
+    this.processor?.disconnect()
+    this.silentGain?.disconnect()
+    this.source?.disconnect()
+    this.stream?.getTracks().forEach((track) => track.stop())
+    if (this.context && this.context.state !== 'closed') await this.context.close().catch(() => undefined)
+    this.processor = null
+    this.silentGain = null
+    this.source = null
+    this.stream = null
+    this.context = null
   }
 
   private async finishCapture(): Promise<void> {

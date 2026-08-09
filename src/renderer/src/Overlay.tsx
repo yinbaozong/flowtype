@@ -14,6 +14,11 @@ export function Overlay(): React.JSX.Element {
   useEffect(() => window.flowApi.onOverlayState(setState), [])
   useEffect(() => window.flowApi.onAudioLevel(setLevel), [])
   useEffect(() => {
+    window.flowApi.reportOverlayHeartbeat()
+    const timer = window.setInterval(() => window.flowApi.reportOverlayHeartbeat(), 2_000)
+    return () => window.clearInterval(timer)
+  }, [])
+  useEffect(() => {
     void recorder.current.prepare().catch(() => undefined)
   }, [])
   useEffect(() => {

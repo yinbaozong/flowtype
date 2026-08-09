@@ -117,6 +117,7 @@ export const mockApi: FlowApi = {
     return () => overlayListeners.delete(callback)
   },
   sendAudioLevel: (level) => levelListeners.forEach((listener) => listener(level)),
+  reportOverlayHeartbeat: () => undefined,
   onAudioLevel: (callback) => {
     levelListeners.add(callback)
     return () => levelListeners.delete(callback)

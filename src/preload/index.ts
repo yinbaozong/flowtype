@@ -34,6 +34,7 @@ const api: FlowApi = {
     return () => ipcRenderer.removeListener('overlay:state', listener)
   },
   sendAudioLevel: (level: number) => ipcRenderer.send('audio:level', level),
+  reportOverlayHeartbeat: () => ipcRenderer.send('overlay:heartbeat'),
   onAudioLevel: (callback: (level: number) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, level: number): void => callback(level)
     ipcRenderer.on('audio:level', listener)

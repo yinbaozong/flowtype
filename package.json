@@ -1,6 +1,6 @@
 {
   "name": "flowtype",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Windows voice dictation utility with a floating recording bar",
   "author": "FlowType",
   "main": "out/main/index.js",
