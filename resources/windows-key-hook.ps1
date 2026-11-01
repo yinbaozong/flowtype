@@ -1,5 +1,6 @@
 param(
     [string]$Shortcut = 'Super+Space',
+    [string]$OtherShortcut = '',
     [switch]$AllowInjected
 )
 
@@ -27,16 +28,20 @@ public static class FlowTypeHotkeyHook
     private static readonly UIntPtr InternalInjection = new UIntPtr(0x46545950);
 
     private static readonly LowLevelKeyboardProc Proc = HookCallback;
+    private static readonly LowLevelKeyboardProc MouseProc = MouseCallback;
+    private static IntPtr mouseHookId;
     private static readonly HashSet<int> Required = new HashSet<int>();
+    private static readonly HashSet<int> Other = new HashSet<int>();
     private static readonly HashSet<int> Down = new HashSet<int>();
     private static IntPtr hookId = IntPtr.Zero;
     private static bool allowInjected;
     private static bool active;
     private static bool suppressUntilReleased;
 
-    public static void Run(string shortcut, bool acceptInjected)
+    public static void Run(string shortcut, string otherShortcut, bool acceptInjected)
     {
         allowInjected = acceptInjected;
+        foreach (string token in otherShortcut.Split('+')) { int key = VirtualKey(token.Trim()); if (key != 0) Other.Add(key); }
         foreach (string token in shortcut.Split('+'))
         {
             int key = VirtualKey(token.Trim());
@@ -46,11 +51,20 @@ public static class FlowTypeHotkeyHook
         if (Required.Count < 2) throw new ArgumentException("Shortcut must contain at least two keys");
 
         hookId = SetHook(Proc);
+        mouseHookId = SetWindowsHookEx(14, MouseProc, GetModuleHandle(null), 0);
         if (hookId == IntPtr.Zero) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
         Console.WriteLine("READY");
         Console.Out.Flush();
         Application.Run();
         UnhookWindowsHookEx(hookId);
+        if (mouseHookId != IntPtr.Zero) UnhookWindowsHookEx(mouseHookId);
+    }
+
+    private static IntPtr MouseCallback(int code, IntPtr message, IntPtr data)
+    {
+        if (code >= 0 && (message.ToInt32() == 0x0201 || message.ToInt32() == 0x0204 || message.ToInt32() == 0x0207))
+        { Console.WriteLine("EDIT"); Console.Out.Flush(); }
+        return CallNextHookEx(mouseHookId, code, message, data);
     }
 
     private static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
@@ -69,8 +83,11 @@ public static class FlowTypeHotkeyHook
         bool isRequired = Required.Contains(key);
         if (isDown) Down.Add(key);
         if (isUp) Down.Remove(key);
-
+        bool otherActive = Other.Count > 0;
+        foreach (int required in Other) if (!Down.Contains(required)) otherActive = false;
         bool nowActive = ContainsAllRequired();
+        if (isDown && !nowActive && !otherActive && key != VK_CONTROL && key != VK_SHIFT && key != VK_MENU && key != VK_LWIN)
+        { Console.WriteLine("EDIT"); Console.Out.Flush(); }
         if (!active && nowActive)
         {
             active = true;
@@ -191,4 +208,4 @@ public static class FlowTypeHotkeyHook
 '@
 
 Add-Type -TypeDefinition $source -ReferencedAssemblies System.Windows.Forms
-[FlowTypeHotkeyHook]::Run($Shortcut, $AllowInjected.IsPresent)
+[FlowTypeHotkeyHook]::Run($Shortcut, $OtherShortcut, $AllowInjected.IsPresent)

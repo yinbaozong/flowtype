@@ -1,6 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { OverlayState } from '../../shared/types'
-import { AudioRecorder } from './audio'
 
 export function Overlay(): React.JSX.Element {
   const previewRecording = window.location.hash === '#overlay-recording'
@@ -9,7 +8,6 @@ export function Overlay(): React.JSX.Element {
   )
   const [level, setLevel] = useState(previewRecording ? 0.72 : 0.08)
   const [phase, setPhase] = useState(0)
-  const recorder = useRef(new AudioRecorder())
 
   useEffect(() => window.flowApi.onOverlayState(setState), [])
   useEffect(() => window.flowApi.onAudioLevel(setLevel), [])
@@ -17,9 +15,6 @@ export function Overlay(): React.JSX.Element {
     window.flowApi.reportOverlayHeartbeat()
     const timer = window.setInterval(() => window.flowApi.reportOverlayHeartbeat(), 2_000)
     return () => window.clearInterval(timer)
-  }, [])
-  useEffect(() => {
-    void recorder.current.prepare().catch(() => undefined)
   }, [])
   useEffect(() => {
     if (state.mode !== 'recording') return
@@ -33,33 +28,6 @@ export function Overlay(): React.JSX.Element {
     animation = requestAnimationFrame(animate)
     return () => cancelAnimationFrame(animation)
   }, [state.mode])
-  useEffect(
-    () =>
-      window.flowApi.onRecordingCommand((command) => {
-        if (command === 'start') {
-          void recorder.current.start((audioLevel) => window.flowApi.sendAudioLevel(audioLevel)).catch((error: unknown) => {
-            const message =
-              error instanceof DOMException && error.name === 'NotAllowedError'
-                ? '请允许 FlowType 使用麦克风'
-                : error instanceof Error
-                  ? error.message
-                  : '无法启动麦克风'
-            return window.flowApi.reportRecordingError(message)
-          })
-        } else if (command === 'stop') {
-          void recorder.current
-            .stop()
-            .then(window.flowApi.transcribe)
-            .catch((error: unknown) =>
-              window.flowApi.reportRecordingError(error instanceof Error ? error.message : '录音处理失败')
-            )
-        } else {
-          void recorder.current.cancel()
-        }
-      }),
-    []
-  )
-
   const bars = useMemo(
     () =>
       Array.from({ length: 15 }, (_, index) => {

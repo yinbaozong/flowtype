@@ -14,8 +14,13 @@ import {
 } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, readFileSync, writeFileSync, statSync, renameSync } from 'node:fs'
 import { join } from 'node:path'
+import { writeFile, rename } from 'node:fs/promises'
+import { RealtimeSession, type LiveUpdate } from './realtime-session'
+import { BatchSession } from './batch-session'
+import { runInput, stopInputWorker } from './input-worker'
+import type { EventEmitter } from 'node:events'
 import type {
   AppSettings,
   AppState,
@@ -39,6 +44,8 @@ interface StoredData {
 
 const defaults: AppSettings = {
   provider: 'demo',
+  recognitionMode: 'realtime',
+  livePreview: true,
   uiLanguage: 'zh',
   language: 'auto',
   shortcut: 'Super+Space',
@@ -63,6 +70,16 @@ let data: StoredData
 let settings: AppSettings = defaults
 let mainWindow: BrowserWindow | null = null
 let overlayWindow: BrowserWindow | null = null
+let captureWindow: BrowserWindow | null = null
+let captureReady = false
+let pendingCaptureStart: { type: string; id: string } | null = null
+let previewWindow: BrowserWindow | null = null
+let liveSession: RealtimeSession | BatchSession | null = null
+let liveUpdate: LiveUpdate | null = null
+let liveHideTimer: NodeJS.Timeout | null = null
+let captureStopTimer: NodeJS.Timeout | null = null
+let liveInputBlocked = false
+let inputEpoch = 0
 let tray: Tray | null = null
 let recording = false
 let isQuitting = false
@@ -95,9 +112,14 @@ const dataPath = (): string => join(app.getPath('userData'), 'flowtype-data.json
 
 function logRuntime(event: string, detail = ''): void {
   try {
+    const log = join(app.getPath('userData'), 'flowtype-runtime.log')
+    if (existsSync(log) && statSync(log).size > 1_000_000) {
+      renameSync(log, `${log}.previous`)
+    }
+    const safeDetail = detail.replace(/Bearer\s+\S+|sk-[\w-]+/gi, '[redacted]').replace(/[\r\n]+/g, ' ').slice(0, 300)
     appendFileSync(
-      join(app.getPath('userData'), 'flowtype-runtime.log'),
-      `${new Date().toISOString()} ${event}${detail ? ` ${detail}` : ''}\n`,
+      log,
+      `${new Date().toISOString()} ${event}${safeDetail ? ` ${safeDetail}` : ''}\n`,
       'utf8'
     )
   } catch {
@@ -170,9 +192,39 @@ function loadData(): void {
   }
 }
 
+let persistQueue = Promise.resolve()
+let persistFailed = false
 function persist(): void {
   data.settings = toStoredSettings(settings)
-  writeFileSync(dataPath(), JSON.stringify(data, null, 2), 'utf8')
+  const serialized = JSON.stringify(data, null, 2)
+  persistQueue = persistQueue.then(async () => {
+    const path = dataPath()
+    await writeFile(`${path}.tmp`, serialized, 'utf8')
+    await rename(`${path}.tmp`, path)
+  }).catch(() => { persistFailed = true; logRuntime('history-write-failed') })
+}
+
+function journalText(event: { item: HistoryItem } | { delete: string } | { clear: true }): void {
+  appendFileSync(join(app.getPath('userData'), 'dictation-text.jsonl'), `${JSON.stringify(event)}\n`, 'utf8')
+}
+
+function recoverJournal(): void {
+  const path = join(app.getPath('userData'), 'dictation-text.jsonl')
+  if (!existsSync(path)) return
+  for (const line of readFileSync(path, 'utf8').split(/\r?\n/)) {
+    if (!line) continue
+    try {
+      const event = JSON.parse(line)
+      if (event.clear === true) data.history = []
+      else if (typeof event.delete === 'string') data.history = data.history.filter(item => item.id !== event.delete)
+      else if (typeof event.item?.id === 'string' && typeof event.item.text === 'string') {
+        const index = data.history.findIndex(item => item.id === event.item.id)
+        if (index >= 0) data.history[index] = event.item
+        else data.history.unshift(event.item)
+      }
+    } catch { logRuntime('text-journal-truncated-line') }
+  }
+  persist()
 }
 
 function publicSettings(): PublicSettings {
@@ -198,7 +250,7 @@ function getState(): AppState {
 function broadcastState(): void {
   const state = getState()
   mainWindow?.webContents.send('state:changed', state)
-  overlayWindow?.webContents.send('state:changed', state)
+  previewWindow?.webContents.send('state:changed', { ...state, history: [] })
 }
 
 function setOverlayState(state: OverlayState): void {
@@ -216,6 +268,7 @@ function enforceOverlayTopMost(): void {
 }
 
 function syncOverlayVisibility(): void {
+  syncLivePreview()
   if (!overlayWindow || overlayWindow.isDestroyed()) return
   if (!settings.overlayVisible) {
     overlayWindow.hide()
@@ -223,6 +276,39 @@ function syncOverlayVisibility(): void {
   }
   overlayWindow.showInactive()
   enforceOverlayTopMost()
+}
+
+function syncLivePreview(): void {
+  if (!previewWindow || previewWindow.isDestroyed()) return
+  if (!settings.overlayVisible || settings.livePreview === false || !liveUpdate) {
+    previewWindow.hide()
+    return
+  }
+  const base = overlayWindow?.getBounds() || { x: 0, y: 0, width: 64, height: 51 }
+  const area = screen.getDisplayNearestPoint(base).workArea
+  previewWindow.setPosition(Math.max(area.x, Math.min(area.x + area.width - 320, base.x - 128)),
+    base.y - 210 >= area.y ? base.y - 210 : Math.min(area.y + area.height - 200, base.y + 55))
+  previewWindow.showInactive()
+}
+
+function createCaptureWindows(): void {
+  captureWindow = new BrowserWindow({ show: false, webPreferences: {
+    preload: join(__dirname, '../preload/index.mjs'), sandbox: false, backgroundThrottling: false
+  } })
+  loadWindow(captureWindow, '#capture')
+  captureWindow.webContents.on('did-start-loading', () => { captureReady = false })
+  previewWindow = new BrowserWindow({ width: 320, height: 200, frame: false, transparent: true,
+    hasShadow: false, resizable: false, focusable: false, skipTaskbar: true, alwaysOnTop: true, show: false,
+    webPreferences: { preload: join(__dirname, '../preload/index.mjs'), sandbox: false, backgroundThrottling: false } })
+  loadWindow(previewWindow, '#preview')
+  previewWindow.webContents.on('did-finish-load', () => {
+    if (liveUpdate) previewWindow?.webContents.send('live:state', liveUpdate)
+  })
+  captureWindow.webContents.on('render-process-gone', () => {
+    if (recording) stopRecording()
+    liveSession?.finish()
+    if (!isQuitting) captureWindow?.reload()
+  })
 }
 
 function roundedOverlayShape(width: number, mode: OverlayState['mode']): Electron.Rectangle[] {
@@ -396,6 +482,7 @@ function resetTransientRecordingState(): void {
 }
 
 function prepareForPowerTransition(reason: string): void {
+  if (liveSession && recording) stopRecording()
   logRuntime('power-transition-start', reason)
   if (recoveryTimer) clearTimeout(recoveryTimer)
   recoveryTimer = null
@@ -419,12 +506,13 @@ async function recoverRuntime(reason: string): Promise<void> {
   recoveryTimer = null
   logRuntime('runtime-recovery-start', reason)
   try {
-    resetTransientRecordingState()
-    stopHotkeyHooks()
+    if (!liveSession || liveSession.ended) resetTransientRecordingState()
+    const resetHooks = !shortcutReady || reason === 'resume' || reason === 'unlock-screen'
+    if (resetHooks) stopHotkeyHooks()
     if (overlayWindow && !overlayWindow.isDestroyed()) overlayWindow.destroy()
     overlayWindow = null
     createOverlayWindow()
-    const hooksReady = await registerShortcut()
+    const hooksReady = resetHooks ? await registerShortcut() : shortcutReady
     broadcastState()
     logRuntime('runtime-recovery-complete', `${reason} hooks=${hooksReady}`)
   } catch (error) {
@@ -597,13 +685,15 @@ function startHotkeyHook(shortcut: string, purpose: HotkeyPurpose): Promise<void
   return new Promise((resolve, reject) => {
     const child = spawn(
       'powershell.exe',
-      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', hotkeyScriptPath(), '-Shortcut', shortcut],
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', hotkeyScriptPath(), '-Shortcut', shortcut,
+        '-OtherShortcut', purpose === 'recording' ? settings.undoShortcut : settings.shortcut],
       { windowsHide: true }
     )
     setHotkeyHook(purpose, child)
     child.stdout.setEncoding('utf8')
     child.stderr.setEncoding('utf8')
     let ready = false
+    let stdout = ''
     let stderr = ''
     const readyTimer = setTimeout(() => {
       if (ready || getHotkeyHook(purpose) !== child) return
@@ -612,8 +702,12 @@ function startHotkeyHook(shortcut: string, purpose: HotkeyPurpose): Promise<void
       reject(new Error('Windows 快捷键监听器启动超时'))
     }, 5_000)
     child.stdout.on('data', (chunk: string) => {
-      for (const line of chunk.split(/\r?\n/)) {
+      stdout += chunk
+      const lines = stdout.split(/\r?\n/)
+      stdout = lines.pop() || ''
+      for (const line of lines) {
         const value = line.trim()
+        if (value === 'EDIT') { inputEpoch++; liveInputBlocked = true; undoAvailable = false }
         if (value === 'READY' && !ready) {
           ready = true
           clearTimeout(readyTimer)
@@ -663,17 +757,97 @@ function toggleRecording(): void {
 }
 
 function startRecording(targetHwnd = 0, targetFocusHwnd = 0): void {
-  if (recording) return
+  if (isQuitting) return
+  if (recording || (liveSession && !liveSession.ended)) return
+  if (liveSession && liveUpdate?.phase === 'finishing') return
+  liveSession?.dispose()
+  liveSession = null
   recording = true
+  liveInputBlocked = false
   previousClipboard = clipboard.readText()
   pasteTargetExpected = true
   pasteTargetHwnd = targetHwnd
   pasteTargetFocusHwnd = targetFocusHwnd
   setOverlayState({ mode: 'recording', startedAt: Date.now(), message: '正在聆听' })
-  overlayWindow?.webContents.send('recording:command', 'start')
-  maximumRecordingTimer = setTimeout(stopRecording, 60_000)
+  startLiveSession(targetHwnd, targetFocusHwnd)
+  maximumRecordingTimer = setTimeout(() => { logRuntime('recording-limit', '30 minutes'); stopRecording() }, 30 * 60_000)
   broadcastState()
 }
+
+function startLiveSession(targetHwnd: number, targetFocusHwnd: number): void {
+  if (liveHideTimer) clearTimeout(liveHideTimer)
+  const snapshot = { ...settings }
+  let item: HistoryItem | undefined
+  let lastWrite = 0
+  let acceptingInput = true
+  let previousPhase = ''
+  let firstText = false
+  const realtime = snapshot.provider === 'qwen' && snapshot.recognitionMode !== 'batch'
+  const onUpdate = (update: LiveUpdate): void => {
+    if (liveSession !== instance) return
+    liveUpdate = update
+    previewWindow?.webContents.send('live:state', update)
+    syncLivePreview()
+    if (update.phase !== previousPhase) { previousPhase = update.phase; logRuntime('live-phase', `${update.id} ${update.phase}`) }
+    if (!firstText && (update.text || update.draft)) { firstText = true; logRuntime('live-first-text-ms', String(Date.now() - instance.startedAt)) }
+    if ((update.text || update.draft || update.phase === 'failed' || update.phase === 'done') && (!item || item.text !== update.text || Date.now() - lastWrite > 1000 || update.phase === 'done' || update.phase === 'failed')) {
+      if (!item) {
+        item = { id: instance.id, text: '', createdAt: new Date(instance.startedAt).toISOString(), durationMs: 0,
+          language: snapshot.language, provider: snapshot.provider, targetApp: '当前应用', status: 'success', model: realtime ? 'qwen3-asr-flash-realtime' : snapshot.provider === 'qwen' ? 'qwen3-asr-flash' : providerLabels[snapshot.provider] }
+        data.history.unshift(item)
+      }
+      item.text = update.text
+      item.draft = update.draft
+      item.partial = update.phase !== 'done'
+      item.durationMs = instance.ended ? instance.durationMs : Date.now() - instance.startedAt
+      item.status = update.text || update.draft ? 'success' : 'error'
+      item.error = update.error
+      journalText({ item })
+      persist()
+      lastWrite = Date.now()
+      broadcastState()
+    }
+    if (update.phase === 'done' || (update.phase === 'failed' && instance.ended)) {
+      setOverlayState({ mode: update.phase === 'done' ? 'success' : 'error', message: update.error })
+      if (update.phase === 'done') liveHideTimer = setTimeout(() => {
+        if (liveSession === instance) { liveUpdate = null; previewWindow?.hide(); setOverlayState({ mode: 'idle' }) }
+      }, 2000)
+    }
+  }
+  const onSentence = (text: string): void => {
+    if (liveSession !== instance || !acceptingInput || !targetHwnd) return
+    pasteTargetHwnd = targetHwnd
+    pasteTargetFocusHwnd = targetFocusHwnd
+    // Clipboard writes must wait for the preceding paste to complete.
+    livePasteQueue = livePasteQueue.then(async () => {
+      if (liveSession !== instance || !acceptingInput || liveInputBlocked) return
+      const before = { text: clipboard.readText(), html: clipboard.readHTML(), rtf: clipboard.readRTF(), image: clipboard.readImage() }
+      const epoch = inputEpoch
+      clipboard.writeText(text)
+      const child = sendKeyboardCommand(targetHwnd, targetFocusHwnd)
+      const ok = await new Promise<boolean>(resolve => {
+        child.once('close', code => resolve(code === 0))
+        child.once('error', () => resolve(false))
+      })
+      if (clipboard.readText() === text) clipboard.write(before)
+      if (!ok) { acceptingInput = false; undoAvailable = false; return }
+      lastPasteTargetHwnd = targetHwnd
+      undoAvailable = epoch === inputEpoch
+    }).catch(() => { acceptingInput = false })
+  }
+  const instance: RealtimeSession | BatchSession = realtime
+    ? new RealtimeSession(snapshot.qwenApiKey, snapshot.language, onUpdate, onSentence)
+    : new BatchSession(audio => snapshot.provider === 'qwen' ? requestQwen(audio, 'audio/wav', true, snapshot)
+      : snapshot.provider === 'volcano' ? transcribeVolcano(audio, snapshot)
+      : Promise.resolve('这是一次 FlowType 演示识别。'), onUpdate, onSentence)
+  liveSession = instance
+  instance.connect()
+  const command = { type: 'start', id: instance.id }
+  if (!captureReady) pendingCaptureStart = command
+  else captureWindow?.webContents.send('live:capture', command)
+}
+
+let livePasteQueue = Promise.resolve()
 
 function stopRecording(): void {
   if (!recording) return
@@ -681,11 +855,35 @@ function stopRecording(): void {
   maximumRecordingTimer = null
   recording = false
   setOverlayState({ mode: 'processing', message: '正在识别' })
+  if (liveSession) {
+    const instance = liveSession
+    if (pendingCaptureStart?.id === instance.id) {
+      pendingCaptureStart = null
+      instance.finish()
+      broadcastState()
+      return
+    }
+    captureWindow?.webContents.send('live:capture', { type: 'stop', id: instance.id })
+    if (captureStopTimer) clearTimeout(captureStopTimer)
+    captureStopTimer = setTimeout(() => {
+      if (liveSession === instance && !instance.ended) { instance.finish(); captureWindow?.reload(); logRuntime('capture-stop-timeout') }
+    }, 10_000)
+    broadcastState()
+    return
+  }
   overlayWindow?.webContents.send('recording:command', 'stop')
   broadcastState()
 }
 
 function cancelRecording(): void {
+  pendingCaptureStart = null
+  if (liveSession) {
+    captureWindow?.webContents.send('live:capture', { type: 'stop', id: liveSession.id })
+    liveSession.dispose()
+    liveSession = null
+    liveUpdate = null
+    previewWindow?.hide()
+  }
   if (!recording && overlayState.mode === 'idle') return
   if (maximumRecordingTimer) clearTimeout(maximumRecordingTimer)
   maximumRecordingTimer = null
@@ -798,7 +996,9 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = 30_0
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
-    return await fetch(url, { ...init, signal: controller.signal })
+    const response = await fetch(url, { ...init, signal: controller.signal })
+    const body = await response.arrayBuffer()
+    return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers })
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') throw new Error('语音识别请求超时，请检查网络后重试')
     throw error
@@ -807,12 +1007,12 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = 30_0
   }
 }
 
-async function requestQwen(audio: Uint8Array, mimeType: string, requireText: boolean): Promise<string> {
-  if (!settings.qwenApiKey) throw new Error('请先在设置中填写千问 API Key')
+async function requestQwen(audio: Uint8Array, mimeType: string, requireText: boolean, config = settings): Promise<string> {
+  if (!config.qwenApiKey) throw new Error('请先在设置中填写千问 API Key')
   const response = await fetchWithTimeout('https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${settings.qwenApiKey}`,
+      Authorization: `Bearer ${config.qwenApiKey}`,
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
@@ -831,7 +1031,7 @@ async function requestQwen(audio: Uint8Array, mimeType: string, requireText: boo
       stream: false,
       asr_options: {
         enable_itn: true,
-        ...(settings.language === 'auto' ? {} : { language: settings.language })
+        ...(config.language === 'auto' ? {} : { language: config.language })
       }
     })
   })
@@ -870,15 +1070,15 @@ function silentWav(): Uint8Array {
   return new Uint8Array(buffer)
 }
 
-async function transcribeVolcano(audio: Uint8Array): Promise<string> {
-  if (!settings.volcanoApiKey) throw new Error('请先在设置中填写火山引擎 API Key')
+async function transcribeVolcano(audio: Uint8Array, config = settings): Promise<string> {
+  if (!config.volcanoApiKey) throw new Error('请先在设置中填写火山引擎 API Key')
   const requestId = randomUUID()
-  const authHeaders: Record<string, string> = settings.volcanoAccessKey
+  const authHeaders: Record<string, string> = config.volcanoAccessKey
     ? {
-        'X-Api-App-Key': settings.volcanoAppId || settings.volcanoApiKey,
-        'X-Api-Access-Key': settings.volcanoAccessKey
+        'X-Api-App-Key': config.volcanoAppId || config.volcanoApiKey,
+        'X-Api-Access-Key': config.volcanoAccessKey
       }
-    : { 'X-Api-Key': settings.volcanoApiKey }
+    : { 'X-Api-Key': config.volcanoApiKey }
   const response = await fetchWithTimeout('https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash', {
     method: 'POST',
     headers: {
@@ -889,7 +1089,7 @@ async function transcribeVolcano(audio: Uint8Array): Promise<string> {
       ...authHeaders
     },
     body: JSON.stringify({
-      user: { uid: settings.volcanoAppId || settings.volcanoApiKey || 'flowtype-desktop' },
+      user: { uid: config.volcanoAppId || config.volcanoApiKey || 'flowtype-desktop' },
       audio: { data: Buffer.from(audio).toString('base64') },
       request: {
         model_name: 'bigmodel',
@@ -920,14 +1120,23 @@ function sendKeyboardCommand(
   targetHwnd = 0,
   targetFocusHwnd = 0,
   operation: 'paste' | 'undo' = 'paste'
-): ChildProcess {
+): EventEmitter {
   const pasteTarget = targetFocusHwnd || targetHwnd
-  const command = `
+  const definitions = `
 Add-Type -TypeDefinition @'
 using System;
 using System.Text;
 using System.Runtime.InteropServices;
 public static class FlowTypePaste {
+  [StructLayout(LayoutKind.Sequential)] private struct GUITHREADINFO {
+    public int size, flags; public IntPtr active, focus, capture, menu, move, caret; public int left, top, right, bottom;
+  }
+  [DllImport("user32.dll")] private static extern bool GetGUIThreadInfo(uint thread, ref GUITHREADINFO info);
+  public static bool Matches(IntPtr window, IntPtr focus) {
+    if (window == IntPtr.Zero || GetForegroundWindow() != window) return false;
+    GUITHREADINFO info = new GUITHREADINFO { size = Marshal.SizeOf(typeof(GUITHREADINFO)) };
+    return GetGUIThreadInfo(GetWindowThreadProcessId(window, IntPtr.Zero), ref info) && info.focus == focus;
+  }
   private const ushort VK_CONTROL = 0x11;
   private const ushort VK_SHIFT = 0x10;
   private const ushort VK_MENU = 0x12;
@@ -941,7 +1150,7 @@ public static class FlowTypePaste {
   [DllImport("user32.dll")]
   public static extern bool SetForegroundWindow(IntPtr hWnd);
   [DllImport("user32.dll")]
-  private static extern IntPtr GetForegroundWindow();
+  public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")]
   private static extern uint GetWindowThreadProcessId(IntPtr hWnd, IntPtr processId);
   [DllImport("kernel32.dll")]
@@ -960,9 +1169,9 @@ public static class FlowTypePaste {
   [DllImport("user32.dll", SetLastError = true)]
   private static extern uint SendInput(uint count, INPUT[] inputs, int size);
 
-  public static void PasteToControl(IntPtr hWnd) {
+  public static bool PasteToControl(IntPtr hWnd) {
     UIntPtr result;
-    SendMessageTimeout(hWnd, 0x0302, UIntPtr.Zero, IntPtr.Zero, 2, 1500, out result);
+    return SendMessageTimeout(hWnd, 0x0302, UIntPtr.Zero, IntPtr.Zero, 2, 1500, out result) != IntPtr.Zero;
   }
 
   public static void Activate(IntPtr window, IntPtr focus) {
@@ -987,28 +1196,28 @@ public static class FlowTypePaste {
     };
   }
 
-  public static void PasteWithKeyboard() {
+  public static bool PasteWithKeyboard() {
     INPUT[] inputs = new INPUT[] {
       Key(VK_LWIN, true), Key(VK_RWIN, true), Key(VK_MENU, true), Key(VK_SHIFT, true), Key(VK_CONTROL, true),
       Key(VK_CONTROL, false), Key(VK_V, false), Key(VK_V, true), Key(VK_CONTROL, true)
     };
-    SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT)));
+    return SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT))) == inputs.Length;
   }
 
-  public static void UndoWithKeyboard() {
+  public static bool UndoWithKeyboard() {
     INPUT[] inputs = new INPUT[] {
       Key(VK_LWIN, true), Key(VK_RWIN, true), Key(VK_MENU, true), Key(VK_SHIFT, true), Key(VK_CONTROL, true),
       Key(VK_CONTROL, false), Key(VK_Z, false), Key(VK_Z, true), Key(VK_CONTROL, true)
     };
-    SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT)));
+    return SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT))) == inputs.Length;
   }
 
-  public static void Paste(IntPtr focus) {
+  public static bool Paste(IntPtr focus) {
     StringBuilder name = new StringBuilder(128);
     GetClassName(focus, name, name.Capacity);
     string className = name.ToString();
-    if (className.StartsWith("Edit") || className.StartsWith("RichEdit")) PasteToControl(focus);
-    else PasteWithKeyboard();
+    if (className.StartsWith("Edit") || className.StartsWith("RichEdit")) return PasteToControl(focus);
+    return PasteWithKeyboard();
   }
 
   [StructLayout(LayoutKind.Sequential)]
@@ -1043,15 +1252,8 @@ public static class FlowTypePaste {
     public ushort high;
   }
 }
-'@
-[FlowTypePaste]::Activate([IntPtr]${targetHwnd}, [IntPtr]${pasteTarget})
-Start-Sleep -Milliseconds 120
-${operation === 'paste' ? `[FlowTypePaste]::Paste([IntPtr]${pasteTarget})` : '[FlowTypePaste]::UndoWithKeyboard()'}`
-  const encodedCommand = Buffer.from(command, 'utf16le').toString('base64')
-  return spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-EncodedCommand', encodedCommand], {
-    windowsHide: true,
-    stdio: 'ignore'
-  })
+'@`
+  return runInput(definitions, targetHwnd, pasteTarget, operation)
 }
 
 function pasteText(text: string, restoreClipboard = true): void {
@@ -1115,7 +1317,8 @@ function historyExportContent(): { content: string; count: number } {
   const blocks = items.map((item) => [
     `## ${new Date(item.createdAt).toLocaleString('zh-CN', { hour12: false })}`,
     '',
-    `- 模型：${providerLabels[item.provider]}`,
+    `- 模型：${item.model || providerLabels[item.provider]}`,
+    ...(item.partial ? ['- 状态：部分完成（仅导出已定稿文字）'] : []),
     `- 时长：${Math.max(1, Math.round(item.durationMs / 1000))} 秒`,
     '',
     item.text.trim()
@@ -1144,6 +1347,27 @@ async function exportHistory(): Promise<{ canceled: boolean; path?: string; coun
 }
 
 function registerIpc(): void {
+  ipcMain.on('live:capture-ready', event => {
+    if (event.sender !== captureWindow?.webContents) return
+    captureReady = true
+    if (pendingCaptureStart && pendingCaptureStart.id === liveSession?.id && recording) {
+      captureWindow.webContents.send('live:capture', pendingCaptureStart)
+      pendingCaptureStart = null
+    }
+  })
+  ipcMain.on('live:pcm', (event, id: string, pcm: Uint8Array) => {
+    if (event.sender === captureWindow?.webContents && liveSession?.id === id) liveSession.append(pcm)
+  })
+  ipcMain.on('live:finish', (event, id: string) => {
+    if (event.sender === captureWindow?.webContents && liveSession?.id === id) {
+      if (captureStopTimer) clearTimeout(captureStopTimer)
+      liveSession.finish()
+    }
+  })
+  ipcMain.handle('live:retry', () => liveSession?.retry())
+  ipcMain.handle('live:dismiss', () => {
+    cancelRecording()
+  })
   ipcMain.handle('state:get', () => getState())
   ipcMain.handle('settings:save', async (_event, next: AppSettings) => {
     await mergeSettings(next)
@@ -1151,12 +1375,14 @@ function registerIpc(): void {
     return getState()
   })
   ipcMain.handle('history:delete', (_event, id: string) => {
+    journalText({ delete: id })
     data.history = data.history.filter((item) => item.id !== id)
     persist()
     broadcastState()
     return getState()
   })
   ipcMain.handle('history:clear', () => {
+    journalText({ clear: true })
     data.history = []
     persist()
     broadcastState()
@@ -1277,10 +1503,13 @@ app.whenReady().then(() => {
   })
   session.defaultSession.setPermissionCheckHandler((_webContents, permission) => permission === 'media')
   loadData()
+  recoverJournal()
   createMainWindow()
   createOverlayWindow()
+  createCaptureWindows()
   createTray()
   registerIpc()
+  sendKeyboardCommand(0, 0)
   void registerShortcut()
   updateLoginItemSettings()
   startOverlayHealthMonitor()
@@ -1299,8 +1528,27 @@ app.on('second-instance', () => {
   showDashboard()
 })
 
+let quitFlushed = false
+app.on('before-quit', event => {
+  isQuitting = true
+  if (quitFlushed) return
+  event.preventDefault()
+  liveSession?.dispose()
+  void persistQueue.finally(() => {
+    if (!persistFailed) {
+      try { writeFileSync(join(app.getPath('userData'), 'dictation-text.jsonl'), '', 'utf8') } catch { /* Replay is idempotent. */ }
+    }
+    quitFlushed = true
+    app.quit()
+  })
+})
+
 app.on('will-quit', () => {
   isQuitting = true
+  stopInputWorker()
+  liveSession?.dispose()
+  if (liveHideTimer) clearTimeout(liveHideTimer)
+  if (captureStopTimer) clearTimeout(captureStopTimer)
   stopHotkeyHooks()
   shortcutCapture?.kill()
   if (overlayTopMostTimer) clearInterval(overlayTopMostTimer)

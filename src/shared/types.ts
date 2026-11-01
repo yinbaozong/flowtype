@@ -2,6 +2,8 @@ export type Provider = 'demo' | 'qwen' | 'volcano'
 export type AppPage = 'overview' | 'history' | 'dictionary' | 'settings'
 
 export interface AppSettings {
+  recognitionMode?: 'realtime' | 'batch'
+  livePreview?: boolean
   provider: Provider
   uiLanguage: 'zh' | 'en'
   language: 'auto' | 'zh' | 'en' | 'ja' | 'yue'
@@ -28,6 +30,9 @@ export interface PublicSettings extends AppSettings {
 }
 
 export interface HistoryItem {
+  model?: string
+  partial?: boolean
+  draft?: string
   id: string
   text: string
   createdAt: string
@@ -59,6 +64,13 @@ export interface OverlayState {
 }
 
 export interface FlowApi {
+  reportCaptureReady: () => void
+  sendPcm: (id: string, pcm: Uint8Array) => void
+  finishPcm: (id: string) => void
+  retryLive: () => Promise<void>
+  dismissLive: () => Promise<void>
+  onLive: (callback: (state: { text: string; draft: string; phase: string; error?: string; canRetry: boolean }) => void) => () => void
+  onCapture: (callback: (command: { type: 'start' | 'stop'; id: string }) => void) => () => void
   getState: () => Promise<AppState>
   saveSettings: (settings: AppSettings) => Promise<AppState>
   deleteHistory: (id: string) => Promise<AppState>

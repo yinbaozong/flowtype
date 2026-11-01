@@ -1,5 +1,12 @@
 $ErrorActionPreference = 'Stop'
 
+function Get-Sha256([string]$Path) {
+  $algorithm = [System.Security.Cryptography.SHA256]::Create()
+  $stream = [System.IO.File]::OpenRead($Path)
+  try { return [System.BitConverter]::ToString($algorithm.ComputeHash($stream)).Replace('-', '') }
+  finally { $stream.Dispose(); $algorithm.Dispose() }
+}
+
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $package = Get-Content -LiteralPath (Join-Path $projectRoot 'package.json') -Raw | ConvertFrom-Json
 $electronExe = Join-Path $projectRoot 'node_modules\electron\dist\electron.exe'
@@ -25,8 +32,8 @@ if (Test-Path -LiteralPath $output) {
 
 Compress-Archive -Path (Join-Path $unpackedDir '*') -DestinationPath $output -CompressionLevel Optimal
 
-$sourceHash = (Get-FileHash -LiteralPath $electronExe -Algorithm SHA256).Hash
-$portableHash = (Get-FileHash -LiteralPath $appExe -Algorithm SHA256).Hash
+$sourceHash = Get-Sha256 $electronExe
+$portableHash = Get-Sha256 $appExe
 if ($sourceHash -ne $portableHash) {
   throw 'Portable executable hash differs from the original Electron runtime.'
 }
@@ -35,4 +42,4 @@ $archive = Get-Item -LiteralPath $output
 Write-Output ("Portable package: {0}" -f $archive.FullName)
 Write-Output ("Portable bytes: {0}" -f $archive.Length)
 Write-Output ("Executable SHA256: {0}" -f $portableHash)
-Write-Output ("Archive SHA256: {0}" -f (Get-FileHash -LiteralPath $output -Algorithm SHA256).Hash)
+Write-Output ("Archive SHA256: {0}" -f (Get-Sha256 $output))

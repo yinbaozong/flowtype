@@ -1,0 +1,33 @@
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import ts from 'typescript'
+
+const source = readFileSync(new URL('../src/main/transcript-ledger.ts', import.meta.url), 'utf8')
+const compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } }).outputText
+const { TranscriptLedger } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`)
+const ledger = new TranscriptLedger()
+ledger.link('a')
+ledger.update('a', '', 'first draft')
+ledger.update('a', 'corrected ', 'draft')
+assert.equal(ledger.draft, 'corrected draft')
+ledger.link('b', 'a')
+ledger.complete('b', 'second')
+assert.deepEqual(ledger.drain(), [])
+ledger.complete('a', 'first')
+assert.deepEqual(ledger.drain().map(x => x.text), ['first', 'second'])
+ledger.complete('a', 'duplicate')
+ledger.update('a', '', 'late draft')
+assert.deepEqual(ledger.drain(), [])
+assert.equal(ledger.draft, '')
+const reordered = new TranscriptLedger()
+reordered.complete('later', 'later')
+assert.deepEqual(reordered.drain(), [], 'wait for order metadata before insertion')
+reordered.link('later', 'earlier')
+reordered.complete('earlier', 'earlier')
+reordered.link('earlier')
+assert.deepEqual(reordered.drain().map(item => item.text), ['earlier', 'later'])
+ledger.close()
+ledger.complete('c', 'obsolete connection')
+assert.deepEqual(ledger.drain(), [])
+assert.equal(ledger.draft, '')
+console.log('Transcript ledger: draft correction, ordering, deduplication and stale connection checks passed')

@@ -109,11 +109,12 @@ function HistoryRow({
         {item.status === 'error' ? <X size={16} /> : <Mic2 size={16} />}
       </div>
       <div className="history-row__main">
-        <p>{item.status === 'error' ? item.error : item.text}</p>
+        <p>{item.status === 'error' ? item.error : item.text || item.draft}</p>
         <div className="history-row__meta">
           <span>{new Date(item.createdAt).toLocaleString(localeTag(uiLanguage), { hour12: false })}</span>
           <span>{formatDuration(item.durationMs, t)}</span>
           <span>{providerName(item.provider, t)}</span>
+          {item.partial ? <span>{uiLanguage === 'en' ? 'Partial / unfinished' : '部分完成／未定稿'}</span> : null}
         </div>
       </div>
       {item.status === 'success' ? (
@@ -405,6 +406,8 @@ function SettingsPage({
         <div className="settings-group__title"><h2>{t('recognitionSettings')}</h2><p>{t('recognitionSettingsDescription')}</p></div>
         <div className="settings-fields">
           <label><span>{t('recognitionService')}</span><select value={draft.provider} onChange={(event) => update('provider', event.target.value as Provider)}><option value="demo">{t('providerDemo')}</option><option value="qwen">{t('providerQwen')}</option><option value="volcano">{t('providerVolcano')}</option></select></label>
+          {draft.provider === 'qwen' ? <label><span>{draft.uiLanguage === 'en' ? 'Recognition mode' : '识别方式'}</span><select value={draft.recognitionMode || 'realtime'} onChange={event => update('recognitionMode', event.target.value as 'realtime' | 'batch')}><option value="realtime">{draft.uiLanguage === 'en' ? 'Live preview, insert by sentence' : '实时预览，按句输入'}</option><option value="batch">{draft.uiLanguage === 'en' ? 'Transcribe after release' : '松手后整段识别'}</option></select></label> : null}
+          <label className="toggle-row"><span>{draft.uiLanguage === 'en' ? 'Show live preview' : '显示实时文字预览'}</span><input type="checkbox" checked={draft.livePreview !== false} onChange={event => update('livePreview', event.target.checked)} /></label>
           <label><span>{t('recognitionLanguage')}</span><select value={draft.language} onChange={(event) => update('language', event.target.value as AppSettings['language'])}><option value="auto">{t('autoDetect')}</option><option value="zh">{t('chinese')}</option><option value="en">{t('english')}</option><option value="ja">{t('japanese')}</option><option value="yue">{t('cantonese')}</option></select></label>
           <div className="shortcut-setting">
             <span>{t('globalShortcut')}</span>

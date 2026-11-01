@@ -2,6 +2,21 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { AppSettings, AppState, FlowApi, OverlayState, TranscribeRequest } from '../shared/types'
 
 const api: FlowApi = {
+  reportCaptureReady: () => ipcRenderer.send('live:capture-ready'),
+  sendPcm: (id, pcm) => ipcRenderer.send('live:pcm', id, pcm),
+  finishPcm: id => ipcRenderer.send('live:finish', id),
+  retryLive: () => ipcRenderer.invoke('live:retry'),
+  dismissLive: () => ipcRenderer.invoke('live:dismiss'),
+  onLive: callback => {
+    const listener = (_event: Electron.IpcRendererEvent, state: Parameters<typeof callback>[0]): void => callback(state)
+    ipcRenderer.on('live:state', listener)
+    return () => ipcRenderer.removeListener('live:state', listener)
+  },
+  onCapture: callback => {
+    const listener = (_event: Electron.IpcRendererEvent, command: Parameters<typeof callback>[0]): void => callback(command)
+    ipcRenderer.on('live:capture', listener)
+    return () => ipcRenderer.removeListener('live:capture', listener)
+  },
   getState: () => ipcRenderer.invoke('state:get'),
   saveSettings: (settings: AppSettings) => ipcRenderer.invoke('settings:save', settings),
   deleteHistory: (id: string) => ipcRenderer.invoke('history:delete', id),

@@ -1,6 +1,6 @@
 {
   "name": "flowtype",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "description": "Windows voice dictation utility with a floating recording bar",
   "author": "FlowType",
   "main": "out/main/index.js",
@@ -13,6 +13,9 @@
     "dist:portable": "npm run build && electron-builder --win dir && powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-portable.ps1",
     "dist:signed": "npm run build && electron-builder --win nsis -c.win.signAndEditExecutable=true",
     "typecheck": "tsc --noEmit",
+    "test": "node scripts/test-transcript-ledger.mjs && node scripts/test-realtime-session.mjs && node scripts/test-batch-session.mjs && node scripts/test-native-input.mjs",
+    "test:desktop-internal": "node scripts/run-electron-check.mjs test-capture.cjs && node scripts/run-electron-check.mjs test-preview.cjs",
+    "verify:realtime": "node scripts/run-electron-check.mjs verify-live-api.cjs --speech",
     "verify:hotkeys": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-hotkeys.ps1",
     "verify:overlay": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-overlay-shape.ps1",
     "verify:overlay-drag": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-overlay-drag.ps1",
@@ -21,12 +24,14 @@
   "dependencies": {
     "lucide-react": "^0.468.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "ws": "^8.22.1"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
     "@types/react": "^19.0.3",
     "@types/react-dom": "^19.0.2",
+    "@types/ws": "^8.18.2",
     "@vitejs/plugin-react": "^4.3.4",
     "electron": "^35.0.0",
     "electron-builder": "^25.1.8",
