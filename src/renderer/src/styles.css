@@ -840,6 +840,7 @@ select {
 .flow-bar--processing .waveform i {
   animation: thinking 900ms ease-in-out infinite alternate;
 }
+.flow-bar--preparing .waveform i { background: #8ca798; }
 
 .flow-bar--success .waveform i {
   background: #56dd91;

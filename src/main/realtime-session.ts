@@ -32,13 +32,14 @@ export class RealtimeSession {
   private connectTimer: ReturnType<typeof setTimeout> | undefined
   private pumpTimer: ReturnType<typeof setTimeout> | undefined
   private finishSent = false
+  private lastSpeechId: string | undefined
   private phase: LiveUpdate['phase'] = 'connecting'
   private error = ''
   constructor(
     private key: string,
     private language: string,
     private onUpdate: (update: LiveUpdate) => void,
-    private onSentence: (text: string) => void
+    private onSentence: (text: string, confirmedIncrement?: boolean) => void
   ) {}
 
   connect(): void {
@@ -47,6 +48,7 @@ export class RealtimeSession {
     this.failed = false
     this.ready = false
     this.finishSent = false
+    this.lastSpeechId = undefined
     this.phase = 'connecting'
     this.error = ''
     const socket = new WebSocket('wss://dashscope.aliyuncs.com/api-ws/v1/realtime?model=qwen3-asr-flash-realtime', {
@@ -80,6 +82,10 @@ export class RealtimeSession {
           if (this.ended) this.sendFinish()
         }
         if (event.type === 'conversation.item.created') this.ledger.link(event.item.id, event.previous_item_id || undefined)
+        if (event.type === 'input_audio_buffer.speech_started' && id !== this.lastSpeechId) {
+          this.ledger.link(id, this.lastSpeechId)
+          this.lastSpeechId = id
+        }
         if (event.type === 'input_audio_buffer.committed') this.ledger.link(id, event.previous_item_id || undefined)
         if (event.type === 'input_audio_buffer.speech_stopped') this.ledger.markAudioEnd(id, event.audio_end_ms)
         if (event.type === 'conversation.item.input_audio_transcription.text') this.ledger.update(id, event.text || '', event.stash || '')
@@ -88,8 +94,15 @@ export class RealtimeSession {
           this.text += item.text || ''
           if (item.endMs !== undefined) this.checkpoint = Math.max(this.checkpoint, Math.floor(item.endMs * 32))
           else this.safeBoundary = false
-          if (item.text) this.onSentence(item.text)
+          if (item.text && !item.text.startsWith(item.delivered)) {
+            this.safeBoundary = false
+            this.fail('模型修订了已输出文字，最终结果已保存到历史记录。')
+            return
+          }
+          const tail = item.text?.slice(item.delivered.length)
+          if (tail) this.onSentence(tail)
         }
+        for (const delta of this.ledger.drainConfirmed()) this.onSentence(delta, true)
         if (event.type === 'session.finished') {
           if (!this.text.trim()) { this.fail('未检测到可识别的语音 / No speech recognized'); return }
           clearTimeout(this.timer)
@@ -134,8 +147,10 @@ export class RealtimeSession {
     for (let offset = 0; offset < pending.length; offset += 3200) this.audio.push(pending.subarray(offset, offset + 3200))
     this.sent = 0
     this.checkpoint = 0
+    const delivered = this.ledger.pendingDelivered
     this.ledger.close()
     this.ledger = new TranscriptLedger()
+    this.ledger.seedDelivered(delivered)
     this.connect()
     this.timer = setTimeout(() => this.fail('重试超时 / Retry timed out'), Math.max(15_000, pending.length / 32 + 15_000))
   }

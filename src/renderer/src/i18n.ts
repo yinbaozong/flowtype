@@ -75,7 +75,7 @@ const zh = {
   captureUndoShortcut: '录入撤销快捷键',
   undoShortcutCapturePrompt: '请按下新的撤销组合键，松开后自动保存…',
   undoShortcutActive: '撤销快捷键已生效：{shortcut}',
-  undoShortcutHint: '按一次即可撤回 FlowType 最近粘贴到当前输入框的整段文字。',
+  undoShortcutHint: '撤回最近一次写入的文字；连续出字时可能是最近一小段，具体取决于当前软件。',
   overlayWidth: '悬浮条宽度：{width}px',
   overlayWidthHint: '拖动此滑块调节大小；直接拖动悬浮条只会移动位置。',
   overlayPosition: '悬浮条位置',

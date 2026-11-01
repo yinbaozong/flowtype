@@ -2,6 +2,7 @@ export type Provider = 'demo' | 'qwen' | 'volcano'
 export type AppPage = 'overview' | 'history' | 'dictionary' | 'settings'
 
 export interface AppSettings {
+  warmMicrophone?: boolean
   recognitionMode?: 'realtime' | 'batch'
   livePreview?: boolean
   provider: Provider
@@ -59,19 +60,21 @@ export interface TranscribeRequest {
 }
 
 export interface OverlayState {
-  mode: 'idle' | 'recording' | 'processing' | 'success' | 'error'
+  mode: 'idle' | 'preparing' | 'recording' | 'processing' | 'success' | 'error'
   startedAt?: number
   message?: string
 }
 
 export interface FlowApi {
+  reportCaptureStarted: (id: string) => void
+  reportCaptureStatus: (ready: boolean) => void
   reportCaptureReady: () => void
   sendPcm: (id: string, pcm: Uint8Array) => void
   finishPcm: (id: string) => void
   retryLive: () => Promise<void>
   dismissLive: () => Promise<void>
   onLive: (callback: (state: { text: string; draft: string; phase: string; error?: string; canRetry: boolean }) => void) => () => void
-  onCapture: (callback: (command: { type: 'start' | 'stop'; id: string }) => void) => () => void
+  onCapture: (callback: (command: { type: 'prepare' | 'standby' | 'release' | 'start' | 'stop'; id: string }) => void) => () => void
   getState: () => Promise<AppState>
   saveSettings: (settings: AppSettings) => Promise<AppState>
   deleteHistory: (id: string) => Promise<AppState>
@@ -82,7 +85,7 @@ export interface FlowApi {
   transcribe: (request: TranscribeRequest) => Promise<{ text: string }>
   toggleRecording: () => Promise<void>
   cancelRecording: () => Promise<void>
-  reportRecordingError: (message: string) => Promise<void>
+  reportRecordingError: (message: string, sessionId?: string) => Promise<void>
   testProvider: () => Promise<{ ok: boolean; message: string }>
   captureShortcut: (purpose: 'recording' | 'undo') => Promise<{ shortcut: string }>
   openDashboard: () => Promise<void>

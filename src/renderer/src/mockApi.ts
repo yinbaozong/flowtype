@@ -55,6 +55,8 @@ const levelListeners = new Set<(value: number) => void>()
 const emitState = (): void => stateListeners.forEach((listener) => listener(state))
 
 export const mockApi: FlowApi = {
+  reportCaptureStarted: () => undefined,
+  reportCaptureStatus: () => undefined,
   reportCaptureReady: () => undefined,
   sendPcm: () => undefined,
   finishPcm: () => undefined,

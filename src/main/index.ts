@@ -21,6 +21,7 @@ import { RealtimeSession, type LiveUpdate } from './realtime-session'
 import { BatchSession } from './batch-session'
 import { runInput, stopInputWorker } from './input-worker'
 import { deliverClipboard } from './clipboard-delivery'
+import { CoalescedText } from './coalesced-text'
 import type { EventEmitter } from 'node:events'
 import type {
   AppSettings,
@@ -45,6 +46,7 @@ interface StoredData {
 
 const defaults: AppSettings = {
   provider: 'demo',
+  warmMicrophone: false,
   recognitionMode: 'realtime',
   uiLanguage: 'zh',
   language: 'auto',
@@ -72,6 +74,9 @@ let mainWindow: BrowserWindow | null = null
 let overlayWindow: BrowserWindow | null = null
 let captureWindow: BrowserWindow | null = null
 let captureReady = false
+let microphoneReady = false
+let firstPcmSession = ''
+let captureSuspended = false
 let pendingCaptureStart: { type: string; id: string } | null = null
 let liveSession: RealtimeSession | BatchSession | null = null
 let liveUpdate: LiveUpdate | null = null
@@ -281,12 +286,18 @@ function createCaptureWindows(): void {
     preload: join(__dirname, '../preload/index.mjs'), sandbox: false, backgroundThrottling: false
   } })
   loadWindow(captureWindow, '#capture')
-  captureWindow.webContents.on('did-start-loading', () => { captureReady = false })
+  captureWindow.webContents.on('did-start-loading', () => { captureReady = false; microphoneReady = false })
   captureWindow.webContents.on('render-process-gone', () => {
     if (recording) stopRecording()
     liveSession?.finish()
     if (!isQuitting) captureWindow?.reload()
   })
+}
+
+function syncMicrophonePreparation(): void {
+  if (captureReady && !recording && !captureSuspended) {
+    captureWindow?.webContents.send('live:capture', { type: settings.warmMicrophone ? 'prepare' : 'standby', id: '' })
+  }
 }
 
 function roundedOverlayShape(width: number, mode: OverlayState['mode']): Electron.Rectangle[] {
@@ -460,7 +471,9 @@ function resetTransientRecordingState(): void {
 }
 
 function prepareForPowerTransition(reason: string): void {
+  captureSuspended = true
   if (liveSession && recording) stopRecording()
+  captureWindow?.webContents.send('live:capture', { type: 'release', id: '' })
   logRuntime('power-transition-start', reason)
   if (recoveryTimer) clearTimeout(recoveryTimer)
   recoveryTimer = null
@@ -484,6 +497,7 @@ async function recoverRuntime(reason: string): Promise<void> {
   recoveryTimer = null
   logRuntime('runtime-recovery-start', reason)
   try {
+    if (reason === 'resume' || reason === 'unlock-screen') captureSuspended = false
     if (!liveSession || liveSession.ended) resetTransientRecordingState()
     const resetHooks = !shortcutReady || reason === 'resume' || reason === 'unlock-screen'
     if (resetHooks) stopHotkeyHooks()
@@ -491,6 +505,7 @@ async function recoverRuntime(reason: string): Promise<void> {
     overlayWindow = null
     createOverlayWindow()
     const hooksReady = resetHooks ? await registerShortcut() : shortcutReady
+    syncMicrophonePreparation()
     broadcastState()
     logRuntime('runtime-recovery-complete', `${reason} hooks=${hooksReady}`)
   } catch (error) {
@@ -746,7 +761,7 @@ function startRecording(targetHwnd = 0, targetFocusHwnd = 0): void {
   pasteTargetExpected = true
   pasteTargetHwnd = targetHwnd
   pasteTargetFocusHwnd = targetFocusHwnd
-  setOverlayState({ mode: 'recording', startedAt: Date.now(), message: '正在聆听' })
+  setOverlayState({ mode: microphoneReady ? 'recording' : 'preparing', startedAt: Date.now(), message: microphoneReady ? '正在聆听' : '正在准备麦克风' })
   startLiveSession(targetHwnd, targetFocusHwnd)
   maximumRecordingTimer = setTimeout(() => { logRuntime('recording-limit', '30 minutes'); stopRecording() }, 30 * 60_000)
   broadcastState()
@@ -792,13 +807,11 @@ function startLiveSession(targetHwnd: number, targetFocusHwnd: number): void {
       }, 2000)
     }
   }
-  const onSentence = (text: string): void => {
-    if (liveSession !== instance || !acceptingInput || !targetHwnd) return
+  const textQueue = new CoalescedText(job => {
+    livePasteQueue = livePasteQueue.then(job).catch(() => { acceptingInput = false })
+  }, async text => {
     pasteTargetHwnd = targetHwnd
     pasteTargetFocusHwnd = targetFocusHwnd
-    // Clipboard writes must wait for the preceding paste to complete.
-    livePasteQueue = livePasteQueue.then(async () => {
-      if (liveSession !== instance || !acceptingInput || liveInputBlocked) return
       const epoch = inputEpoch
       const ok = await deliverClipboard(text, {
         snapshot: () => ({ text: clipboard.readText(), html: clipboard.readHTML(), rtf: clipboard.readRTF(), image: clipboard.readImage() }),
@@ -814,12 +827,13 @@ function startLiveSession(targetHwnd: number, targetFocusHwnd: number): void {
         acceptingInput = false; undoAvailable = false
         inputFailure = '文字已保存，但输入目标发生变化或拒绝输入。'
         if (item) { item.error = inputFailure; journalText({ item }); persist(); broadcastState() }
-        return
+        return false
       }
       lastPasteTargetHwnd = targetHwnd
       undoAvailable = epoch === inputEpoch
-    }).catch(() => { acceptingInput = false })
-  }
+      return true
+  }, () => liveSession === instance && acceptingInput && !liveInputBlocked && Boolean(targetHwnd))
+  const onSentence = (text: string): void => textQueue.append(text)
   const instance: RealtimeSession | BatchSession = realtime
     ? new RealtimeSession(snapshot.qwenApiKey, snapshot.language, onUpdate, onSentence)
     : new BatchSession(audio => snapshot.provider === 'qwen' ? requestQwen(audio, 'audio/wav', true, snapshot)
@@ -864,6 +878,7 @@ function cancelRecording(): void {
   pendingCaptureStart = null
   if (liveSession) {
     captureWindow?.webContents.send('live:capture', { type: 'stop', id: liveSession.id })
+    if (!settings.warmMicrophone || captureSuspended) captureWindow?.webContents.send('live:capture', { type: captureSuspended ? 'release' : 'standby', id: '' })
     liveSession.dispose()
     liveSession = null
     liveUpdate = null
@@ -947,6 +962,7 @@ async function mergeSettings(next: AppSettings): Promise<void> {
   persist()
   positionOverlay()
   syncOverlayVisibility()
+  syncMicrophonePreparation()
   updateTrayMenu()
 }
 
@@ -1336,21 +1352,33 @@ async function exportHistory(): Promise<{ canceled: boolean; path?: string; coun
 }
 
 function registerIpc(): void {
+  ipcMain.on('live:capture-status', (event, ready: boolean) => {
+    if (event.sender === captureWindow?.webContents) microphoneReady = Boolean(ready)
+  })
+  ipcMain.on('live:capture-started', (event, id: string) => {
+    if (event.sender !== captureWindow?.webContents || liveSession?.id !== id || !recording) return
+    logRuntime('capture-key-to-start-ms', String(Date.now() - liveSession.startedAt))
+    setOverlayState({ mode: 'recording', startedAt: liveSession.startedAt })
+  })
   ipcMain.on('live:capture-ready', event => {
     if (event.sender !== captureWindow?.webContents) return
     captureReady = true
     if (pendingCaptureStart && pendingCaptureStart.id === liveSession?.id && recording) {
       captureWindow.webContents.send('live:capture', pendingCaptureStart)
       pendingCaptureStart = null
-    }
+    } else syncMicrophonePreparation()
   })
   ipcMain.on('live:pcm', (event, id: string, pcm: Uint8Array) => {
-    if (event.sender === captureWindow?.webContents && liveSession?.id === id) liveSession.append(pcm)
+    if (event.sender === captureWindow?.webContents && liveSession?.id === id) {
+      if (firstPcmSession !== id) { firstPcmSession = id; logRuntime('capture-key-to-first-pcm-ms', String(Date.now() - liveSession.startedAt)) }
+      liveSession.append(pcm)
+    }
   })
   ipcMain.on('live:finish', (event, id: string) => {
     if (event.sender === captureWindow?.webContents && liveSession?.id === id) {
       if (captureStopTimer) clearTimeout(captureStopTimer)
       liveSession.finish()
+      if (!settings.warmMicrophone || captureSuspended) captureWindow?.webContents.send('live:capture', { type: captureSuspended ? 'release' : 'standby', id: '' })
     }
   })
   ipcMain.handle('live:retry', () => liveSession?.retry())
@@ -1385,7 +1413,8 @@ function registerIpc(): void {
   })
   ipcMain.handle('recording:toggle', toggleRecording)
   ipcMain.handle('recording:cancel', cancelRecording)
-  ipcMain.handle('recording:error', (_event, message: string) => {
+  ipcMain.handle('recording:error', (_event, message: string, sessionId?: string) => {
+    if (sessionId && liveSession?.id !== sessionId) return
     logRuntime('recording-error', message.replace(/[\r\n]+/g, ' ').slice(0, 300))
     if (maximumRecordingTimer) clearTimeout(maximumRecordingTimer)
     maximumRecordingTimer = null

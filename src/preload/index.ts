@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { AppSettings, AppState, FlowApi, OverlayState, TranscribeRequest } from '../shared/types'
 
 const api: FlowApi = {
+  reportCaptureStarted: id => ipcRenderer.send('live:capture-started', id),
+  reportCaptureStatus: ready => ipcRenderer.send('live:capture-status', ready),
   reportCaptureReady: () => ipcRenderer.send('live:capture-ready'),
   sendPcm: (id, pcm) => ipcRenderer.send('live:pcm', id, pcm),
   finishPcm: id => ipcRenderer.send('live:finish', id),
@@ -27,7 +29,7 @@ const api: FlowApi = {
   transcribe: (request: TranscribeRequest) => ipcRenderer.invoke('audio:transcribe', request),
   toggleRecording: () => ipcRenderer.invoke('recording:toggle'),
   cancelRecording: () => ipcRenderer.invoke('recording:cancel'),
-  reportRecordingError: (message: string) => ipcRenderer.invoke('recording:error', message),
+  reportRecordingError: (message: string, sessionId?: string) => ipcRenderer.invoke('recording:error', message, sessionId),
   testProvider: () => ipcRenderer.invoke('provider:test'),
   captureShortcut: (purpose) => ipcRenderer.invoke('shortcut:capture', purpose),
   openDashboard: () => ipcRenderer.invoke('window:open-dashboard'),
