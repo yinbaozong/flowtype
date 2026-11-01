@@ -23,9 +23,10 @@ while ($null -ne ($line = [Console]::ReadLine())) {
   try {
     $job = $line | ConvertFrom-Json
     $code = 2
-    if ([FlowTypePaste]::Matches([IntPtr]$job.hwnd, [IntPtr]$job.focus)) {
+    $target = [FlowTypePaste]::ResolveFocus([IntPtr]$job.hwnd, [IntPtr]$job.focus)
+    if ($target -ne [IntPtr]::Zero) {
       $ok = if ($job.operation -eq 'undo') { [FlowTypePaste]::UndoWithKeyboard() }
-      else { [FlowTypePaste]::Paste([IntPtr]$job.focus) }
+      else { [FlowTypePaste]::Paste($target) }
       if ($ok) { $code = 0 }
     }
     [Console]::WriteLine(('RESULT {0} {1}' -f $job.id, $code))

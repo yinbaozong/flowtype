@@ -20,6 +20,7 @@ import { writeFile, rename } from 'node:fs/promises'
 import { RealtimeSession, type LiveUpdate } from './realtime-session'
 import { BatchSession } from './batch-session'
 import { runInput, stopInputWorker } from './input-worker'
+import { deliverClipboard } from './clipboard-delivery'
 import type { EventEmitter } from 'node:events'
 import type {
   AppSettings,
@@ -45,7 +46,6 @@ interface StoredData {
 const defaults: AppSettings = {
   provider: 'demo',
   recognitionMode: 'realtime',
-  livePreview: true,
   uiLanguage: 'zh',
   language: 'auto',
   shortcut: 'Super+Space',
@@ -73,7 +73,6 @@ let overlayWindow: BrowserWindow | null = null
 let captureWindow: BrowserWindow | null = null
 let captureReady = false
 let pendingCaptureStart: { type: string; id: string } | null = null
-let previewWindow: BrowserWindow | null = null
 let liveSession: RealtimeSession | BatchSession | null = null
 let liveUpdate: LiveUpdate | null = null
 let liveHideTimer: NodeJS.Timeout | null = null
@@ -243,14 +242,14 @@ function getState(): AppState {
     settings: publicSettings(),
     history: data.history,
     recording,
-    shortcutReady
+    shortcutReady,
+    pendingRetryId: liveUpdate?.canRetry ? liveUpdate.id : undefined
   }
 }
 
 function broadcastState(): void {
   const state = getState()
   mainWindow?.webContents.send('state:changed', state)
-  previewWindow?.webContents.send('state:changed', { ...state, history: [] })
 }
 
 function setOverlayState(state: OverlayState): void {
@@ -268,7 +267,6 @@ function enforceOverlayTopMost(): void {
 }
 
 function syncOverlayVisibility(): void {
-  syncLivePreview()
   if (!overlayWindow || overlayWindow.isDestroyed()) return
   if (!settings.overlayVisible) {
     overlayWindow.hide()
@@ -278,32 +276,12 @@ function syncOverlayVisibility(): void {
   enforceOverlayTopMost()
 }
 
-function syncLivePreview(): void {
-  if (!previewWindow || previewWindow.isDestroyed()) return
-  if (!settings.overlayVisible || settings.livePreview === false || !liveUpdate) {
-    previewWindow.hide()
-    return
-  }
-  const base = overlayWindow?.getBounds() || { x: 0, y: 0, width: 64, height: 51 }
-  const area = screen.getDisplayNearestPoint(base).workArea
-  previewWindow.setPosition(Math.max(area.x, Math.min(area.x + area.width - 320, base.x - 128)),
-    base.y - 210 >= area.y ? base.y - 210 : Math.min(area.y + area.height - 200, base.y + 55))
-  previewWindow.showInactive()
-}
-
 function createCaptureWindows(): void {
   captureWindow = new BrowserWindow({ show: false, webPreferences: {
     preload: join(__dirname, '../preload/index.mjs'), sandbox: false, backgroundThrottling: false
   } })
   loadWindow(captureWindow, '#capture')
   captureWindow.webContents.on('did-start-loading', () => { captureReady = false })
-  previewWindow = new BrowserWindow({ width: 320, height: 200, frame: false, transparent: true,
-    hasShadow: false, resizable: false, focusable: false, skipTaskbar: true, alwaysOnTop: true, show: false,
-    webPreferences: { preload: join(__dirname, '../preload/index.mjs'), sandbox: false, backgroundThrottling: false } })
-  loadWindow(previewWindow, '#preview')
-  previewWindow.webContents.on('did-finish-load', () => {
-    if (liveUpdate) previewWindow?.webContents.send('live:state', liveUpdate)
-  })
   captureWindow.webContents.on('render-process-gone', () => {
     if (recording) stopRecording()
     liveSession?.finish()
@@ -707,7 +685,7 @@ function startHotkeyHook(shortcut: string, purpose: HotkeyPurpose): Promise<void
       stdout = lines.pop() || ''
       for (const line of lines) {
         const value = line.trim()
-        if (value === 'EDIT') { inputEpoch++; liveInputBlocked = true; undoAvailable = false }
+        if (value === 'EDIT' && purpose === 'recording') { inputEpoch++; liveInputBlocked = true; undoAvailable = false }
         if (value === 'READY' && !ready) {
           ready = true
           clearTimeout(readyTimer)
@@ -780,14 +758,14 @@ function startLiveSession(targetHwnd: number, targetFocusHwnd: number): void {
   let item: HistoryItem | undefined
   let lastWrite = 0
   let acceptingInput = true
+  let inputFailure: string | undefined
   let previousPhase = ''
   let firstText = false
   const realtime = snapshot.provider === 'qwen' && snapshot.recognitionMode !== 'batch'
   const onUpdate = (update: LiveUpdate): void => {
     if (liveSession !== instance) return
     liveUpdate = update
-    previewWindow?.webContents.send('live:state', update)
-    syncLivePreview()
+    mainWindow?.webContents.send('live:state', update)
     if (update.phase !== previousPhase) { previousPhase = update.phase; logRuntime('live-phase', `${update.id} ${update.phase}`) }
     if (!firstText && (update.text || update.draft)) { firstText = true; logRuntime('live-first-text-ms', String(Date.now() - instance.startedAt)) }
     if ((update.text || update.draft || update.phase === 'failed' || update.phase === 'done') && (!item || item.text !== update.text || Date.now() - lastWrite > 1000 || update.phase === 'done' || update.phase === 'failed')) {
@@ -801,7 +779,7 @@ function startLiveSession(targetHwnd: number, targetFocusHwnd: number): void {
       item.partial = update.phase !== 'done'
       item.durationMs = instance.ended ? instance.durationMs : Date.now() - instance.startedAt
       item.status = update.text || update.draft ? 'success' : 'error'
-      item.error = update.error
+      item.error = update.error || inputFailure
       journalText({ item })
       persist()
       lastWrite = Date.now()
@@ -810,7 +788,7 @@ function startLiveSession(targetHwnd: number, targetFocusHwnd: number): void {
     if (update.phase === 'done' || (update.phase === 'failed' && instance.ended)) {
       setOverlayState({ mode: update.phase === 'done' ? 'success' : 'error', message: update.error })
       if (update.phase === 'done') liveHideTimer = setTimeout(() => {
-        if (liveSession === instance) { liveUpdate = null; previewWindow?.hide(); setOverlayState({ mode: 'idle' }) }
+        if (liveSession === instance) { liveUpdate = null; setOverlayState({ mode: 'idle' }) }
       }, 2000)
     }
   }
@@ -821,16 +799,23 @@ function startLiveSession(targetHwnd: number, targetFocusHwnd: number): void {
     // Clipboard writes must wait for the preceding paste to complete.
     livePasteQueue = livePasteQueue.then(async () => {
       if (liveSession !== instance || !acceptingInput || liveInputBlocked) return
-      const before = { text: clipboard.readText(), html: clipboard.readHTML(), rtf: clipboard.readRTF(), image: clipboard.readImage() }
       const epoch = inputEpoch
-      clipboard.writeText(text)
-      const child = sendKeyboardCommand(targetHwnd, targetFocusHwnd)
-      const ok = await new Promise<boolean>(resolve => {
-        child.once('close', code => resolve(code === 0))
+      const ok = await deliverClipboard(text, {
+        snapshot: () => ({ text: clipboard.readText(), html: clipboard.readHTML(), rtf: clipboard.readRTF(), image: clipboard.readImage() }),
+        write: value => clipboard.writeText(value),
+        owns: value => clipboard.readText() === value && !clipboard.readHTML() && !clipboard.readRTF() && clipboard.readImage().isEmpty(),
+        restore: value => clipboard.write(value)
+      }, () => new Promise<boolean>(resolve => {
+        const child = sendKeyboardCommand(targetHwnd, targetFocusHwnd)
+        child.once('close', code => { logRuntime('live-input-result', `${instance.id} code=${code}`); resolve(code === 0) })
         child.once('error', () => resolve(false))
-      })
-      if (clipboard.readText() === text) clipboard.write(before)
-      if (!ok) { acceptingInput = false; undoAvailable = false; return }
+      }), () => liveSession === instance && acceptingInput && !liveInputBlocked)
+      if (!ok) {
+        acceptingInput = false; undoAvailable = false
+        inputFailure = '文字已保存，但输入目标发生变化或拒绝输入。'
+        if (item) { item.error = inputFailure; journalText({ item }); persist(); broadcastState() }
+        return
+      }
       lastPasteTargetHwnd = targetHwnd
       undoAvailable = epoch === inputEpoch
     }).catch(() => { acceptingInput = false })
@@ -882,7 +867,6 @@ function cancelRecording(): void {
     liveSession.dispose()
     liveSession = null
     liveUpdate = null
-    previewWindow?.hide()
   }
   if (!recording && overlayState.mode === 'idle') return
   if (maximumRecordingTimer) clearTimeout(maximumRecordingTimer)
@@ -1133,9 +1117,14 @@ public static class FlowTypePaste {
   }
   [DllImport("user32.dll")] private static extern bool GetGUIThreadInfo(uint thread, ref GUITHREADINFO info);
   public static bool Matches(IntPtr window, IntPtr focus) {
-    if (window == IntPtr.Zero || GetForegroundWindow() != window) return false;
+    return ResolveFocus(window, focus) != IntPtr.Zero;
+  }
+  public static IntPtr ResolveFocus(IntPtr window, IntPtr focus) {
+    if (window == IntPtr.Zero || GetForegroundWindow() != window) return IntPtr.Zero;
     GUITHREADINFO info = new GUITHREADINFO { size = Marshal.SizeOf(typeof(GUITHREADINFO)) };
-    return GetGUIThreadInfo(GetWindowThreadProcessId(window, IntPtr.Zero), ref info) && info.focus == focus;
+    if (!GetGUIThreadInfo(GetWindowThreadProcessId(window, IntPtr.Zero), ref info)) return IntPtr.Zero;
+    if (focus == IntPtr.Zero || focus == window) return info.focus == IntPtr.Zero ? window : info.focus;
+    return info.focus == focus ? focus : IntPtr.Zero;
   }
   private const ushort VK_CONTROL = 0x11;
   private const ushort VK_SHIFT = 0x10;

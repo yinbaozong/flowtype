@@ -13,7 +13,7 @@ FlowType is a Windows desktop voice dictation tool built with Electron, React, a
 ## Why Star This
 
 - System-wide voice input for Windows, not just a demo inside one textbox.
-- Qwen realtime recognition: see a revisable live draft and insert each finalized sentence as you speak.
+- Qwen realtime recognition: insert each finalized sentence directly into the original input field as you speak.
 - Floating recording bar with waveform feedback and draggable position.
 - Reliable native window dragging plus a persistent hide/show control for screen recording.
 - Native custom shortcut capture with hold-to-talk behavior for every supported combination.
@@ -26,15 +26,15 @@ FlowType is a Windows desktop voice dictation tool built with Electron, React, a
 
 ## The Experience
 
-Version 0.6.0 defaults to `qwen3-asr-flash-realtime` for Qwen. Choose realtime or batch mode and toggle the separate live preview in Settings. Volcano retains batch recognition. The draggable green bar keeps its existing size, including the 44px minimum.
+Version 0.6.1 defaults to `qwen3-asr-flash-realtime` for Qwen. Choose realtime or batch mode in Settings. Finalized sentences enter the original input field directly, with no separate transcript popup. Volcano retains batch recognition. The draggable green bar keeps its existing size, including the 44px minimum.
 
-Audio is held in memory only. When recognition fails, release the hotkey and choose **Retry once** in the preview. A failed second attempt, Dismiss, starting another recording, or quitting releases the pending audio. Finalized text and labeled unfinished drafts remain in local history. A full application crash cannot recover unrecognized audio. A single recording can last up to 30 minutes; batch requests split long recordings into bounded chunks after release.
+Audio is held in memory only. When recognition fails, release the hotkey and choose **Retry once** in History. A failed second attempt, Dismiss, starting another recording, or quitting releases the pending audio. Finalized text and labeled unfinished drafts remain in local history. A full application crash cannot recover unrecognized audio. A single recording can last up to 30 minutes; batch requests split long recordings into bounded chunks after release.
 
-Changing focus or editing manually stops automatic insertion for that recording; subsequent text remains available in History. Undo affects the most recent inserted sentence and is disabled after a manual edit. A hidden preview is also hidden when the floating bar is hidden. No separate API key is needed for Qwen realtime, but the key must have access to that model.
+Changing focus or editing manually stops automatic insertion for that recording; subsequent text remains available in History. Undo affects the most recent inserted sentence and is disabled after a manual edit. No separate API key is needed for Qwen realtime, but the key must have access to that model.
 
 1. Put the cursor in any text field: editor, browser, chat app, notes app.
 2. Hold the configured shortcut, such as `Win + Space` or `Alt + Win`.
-3. Speak naturally and watch the draft update; finalized sentences enter the original input field at natural pauses.
+3. Speak naturally; finalized sentences enter the original input field at natural pauses.
 4. Release the shortcut to finalize the last sentence.
 5. For batch mode, transcription starts after release and inserts the complete result.
 
@@ -45,7 +45,7 @@ No cloud account is bundled with the app. Users configure their own speech API k
 Most users should install from GitHub Releases:
 
 1. Open the latest release: https://github.com/yinbaozong/flowtype/releases/latest
-2. The same `v0.6.0` release contains both downloads: `FlowType.Portable.0.6.0.zip` for portable use and `FlowType.Setup.0.6.0.exe` for normal installation.
+2. The same `v0.6.1` release contains both downloads: `FlowType.Portable.0.6.1.zip` for portable use and `FlowType.Setup.0.6.1.exe` for normal installation.
 3. For the portable build, extract the complete ZIP to a fixed folder and run `FlowType.exe`. For the installer, run the EXE and choose an installation directory.
 4. If Windows warns that the publisher is unknown, only continue if you trust the downloaded file.
 5. Start FlowType, open Settings, and add your own speech API key.
@@ -102,7 +102,7 @@ Build the Smart App Control-compatible portable archive used for local unsigned 
 npm run dist:portable
 ```
 
-The portable archive is written to `release/FlowType Portable 0.6.0.zip`. It keeps the original Electron executable byte-for-byte and packages FlowType in the adjacent `resources/app.asar` file. The installer is written to `release/FlowType Setup 0.6.0.exe`.
+The portable archive is written to `release/FlowType Portable 0.6.1.zip`. It keeps the original Electron executable byte-for-byte and packages FlowType in the adjacent `resources/app.asar` file. The installer is written to `release/FlowType Setup 0.6.1.exe`.
 
 ## First Setup
 

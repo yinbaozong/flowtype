@@ -27,6 +27,7 @@ const noInputDefinitions = `Add-Type -TypeDefinition @'
 using System;
 public static class FlowTypePaste {
   public static bool Matches(IntPtr window, IntPtr focus) { return window.ToInt64() == 123 && focus.ToInt64() == 456; }
+  public static IntPtr ResolveFocus(IntPtr window, IntPtr focus) { return Matches(window, focus) ? focus : IntPtr.Zero; }
   public static bool Paste(IntPtr focus) { return true; }
   public static bool UndoWithKeyboard() { return true; }
 }

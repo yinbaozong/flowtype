@@ -45,6 +45,7 @@ export interface HistoryItem {
 }
 
 export interface AppState {
+  pendingRetryId?: string
   settings: PublicSettings
   history: HistoryItem[]
   recording: boolean
