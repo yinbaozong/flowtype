@@ -26,9 +26,9 @@ FlowType 是一款使用 Electron、React 和 TypeScript 开发的 Windows 桌�
 普通用户不需要安装 Node.js，也不需要编译源代码：
 
 1. 打开 [GitHub 最新版本](https://github.com/yinbaozong/flowtype/releases/latest)。
-2. 同一个 `v0.6.2` Release 中同时提供两种文件。
-3. 免安装版：下载 `FlowType.Portable.0.6.2.zip`，完整解压到固定文件夹，再运行 `FlowType.exe`。
-4. 安装版：下载 `FlowType.Setup.0.6.2.exe`，运行后选择安装位置。
+2. 同一个 `v0.6.3` Release 中同时提供两种文件。
+3. 免安装版：下载 `FlowType.Portable.0.6.3.zip`，完整解压到固定文件夹，再运行 `FlowType.exe`。
+4. 安装版：下载 `FlowType.Setup.0.6.3.exe`，运行后选择安装位置。
 5. 启动 FlowType，在设置页配置语音识别服务、API Key 和快捷键。
 
 免安装版无需安装向导，关闭“开机自动启动”后删除解压目录即可移除程序；启用开机启动会设置 Windows 启动项。安装版会在安装目录中生成 `Uninstall FlowType.exe`。两种版本共用 `%APPDATA%\FlowType` 中的设置和历史记录，因此升级或更换程序目录不会自动删除个人数据。
@@ -37,7 +37,9 @@ FlowType 是一款使用 Electron、React 和 TypeScript 开发的 Windows 桌�
 
 ## 使用方式
 
-0.6.2 的千问默认使用 `qwen3-asr-flash-realtime`。设置中可以切换“实时识别，连续出字”和“松手后整段识别”。模型一确认新增文字就直接输入原输入框，不再由软件等待整句完成；结束时只补齐剩余文字。模型可能一次确认几个字或短片段，仍受网络及模型延迟影响。火山保留整段识别。绿色悬浮条维持原尺寸，最小仍为 44px。
+0.6.3 的千问默认使用 `qwen3-asr-flash-realtime`。设置中可以切换“实时识别，连续出字”和“松手后整段识别”。模型一确认新增文字就直接输入原输入框，不再由软件等待整句完成；结束时只补齐剩余文字。模型可能一次确认几个字或短片段，仍受网络及模型延迟影响。火山保留整段识别。绿色悬浮条维持原尺寸，最小仍为 44px。
+
+本版移除了音频发送端多余的逐块计时等待，防止越说越积压。松开快捷键后，不必等上一轮转圈结束，就可以再次按住快捷键继续录音；上一轮在后台收尾，文字仍按录音顺序输入。等待时也可以正常手动打字或切换输入框，此时尚未回填的内容只保存在历史记录，不会抢回焦点。[原因排查与实测对比](docs/latency-0.6.3.md)。
 
 默认仅在按键时申请麦克风，空闲时只预加载处理代码；录音结束后释放麦克风。准备期间波形为灰色，实际采集启动后变绿。按需模式仍存在短暂硬件打开时间，看到变绿后开始说话最稳妥；按键前说出的内容不会补录。设置中的“预热麦克风”默认关闭，开启可进一步降低启动延迟，但 Windows 可能显示空闲时仍占用麦克风。
 
@@ -132,7 +134,7 @@ npm run dist
 npm run dist:portable
 ```
 
-安装包输出到 `release/FlowType Setup 0.6.2.exe`，免安装包输出到 `release/FlowType Portable 0.6.2.zip`。
+安装包输出到 `release/FlowType Setup 0.6.3.exe`，免安装包输出到 `release/FlowType Portable 0.6.3.zip`。
 
 ## 项目结构
 

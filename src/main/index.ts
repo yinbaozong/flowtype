@@ -22,6 +22,7 @@ import { BatchSession } from './batch-session'
 import { runInput, stopInputWorker } from './input-worker'
 import { deliverClipboard } from './clipboard-delivery'
 import { CoalescedText } from './coalesced-text'
+import { OrderedInput } from './ordered-input'
 import type { EventEmitter } from 'node:events'
 import type {
   AppSettings,
@@ -79,10 +80,17 @@ let firstPcmSession = ''
 let captureSuspended = false
 let pendingCaptureStart: { type: string; id: string } | null = null
 let liveSession: RealtimeSession | BatchSession | null = null
+interface DictationRun {
+  session: RealtimeSession | BatchSession
+  finishInput(): Promise<void>
+  captureStarted?: boolean
+  update?: LiveUpdate
+  stopTimer?: NodeJS.Timeout
+}
+const liveSessions = new Map<string, DictationRun>()
+const orderedInput = new OrderedInput()
 let liveUpdate: LiveUpdate | null = null
 let liveHideTimer: NodeJS.Timeout | null = null
-let captureStopTimer: NodeJS.Timeout | null = null
-let liveInputBlocked = false
 let inputEpoch = 0
 let tray: Tray | null = null
 let recording = false
@@ -472,6 +480,7 @@ function resetTransientRecordingState(): void {
 
 function prepareForPowerTransition(reason: string): void {
   captureSuspended = true
+  invalidateLiveInput()
   if (liveSession && recording) stopRecording()
   captureWindow?.webContents.send('live:capture', { type: 'release', id: '' })
   logRuntime('power-transition-start', reason)
@@ -665,6 +674,12 @@ function captureShortcut(): Promise<{ shortcut: string }> {
 
 type HotkeyPurpose = 'recording' | 'undo'
 
+function invalidateLiveInput(): void {
+  inputEpoch++
+  undoAvailable = false
+  for (const run of liveSessions.values()) void run.finishInput()
+}
+
 function getHotkeyHook(purpose: HotkeyPurpose): ChildProcessWithoutNullStreams | null {
   return purpose === 'recording' ? hotkeyHook : undoHotkeyHook
 }
@@ -700,7 +715,7 @@ function startHotkeyHook(shortcut: string, purpose: HotkeyPurpose): Promise<void
       stdout = lines.pop() || ''
       for (const line of lines) {
         const value = line.trim()
-        if (value === 'EDIT' && purpose === 'recording') { inputEpoch++; liveInputBlocked = true; undoAvailable = false }
+        if (value === 'EDIT' && purpose === 'recording') invalidateLiveInput()
         if (value === 'READY' && !ready) {
           ready = true
           clearTimeout(readyTimer)
@@ -750,13 +765,17 @@ function toggleRecording(): void {
 }
 
 function startRecording(targetHwnd = 0, targetFocusHwnd = 0): void {
-  if (isQuitting) return
-  if (recording || (liveSession && !liveSession.ended)) return
-  if (liveSession && liveUpdate?.phase === 'finishing') return
-  liveSession?.dispose()
+  if (isQuitting || captureSuspended || recording) return
+  for (const [id, run] of liveSessions) {
+    if (run.update?.phase === 'failed' && run.session.ended) {
+      if (run.stopTimer) clearTimeout(run.stopTimer)
+      run.session.dispose()
+      liveSessions.delete(id)
+    }
+  }
   liveSession = null
+  liveUpdate = null
   recording = true
-  liveInputBlocked = false
   previousClipboard = clipboard.readText()
   pasteTargetExpected = true
   pasteTargetHwnd = targetHwnd
@@ -776,12 +795,23 @@ function startLiveSession(targetHwnd: number, targetFocusHwnd: number): void {
   let inputFailure: string | undefined
   let previousPhase = ''
   let firstText = false
+  let firstConfirmed = false
+  let releasedAt: number | undefined
+  const epoch = inputEpoch
+  const turn = orderedInput.begin()
   const realtime = snapshot.provider === 'qwen' && snapshot.recognitionMode !== 'batch'
   const onUpdate = (update: LiveUpdate): void => {
-    if (liveSession !== instance) return
-    liveUpdate = update
-    mainWindow?.webContents.send('live:state', update)
+    const run = liveSessions.get(instance.id)
+    if (!run) return
+    run.update = update
+    const current = liveSession === instance
+    if (current) {
+      liveUpdate = update
+      mainWindow?.webContents.send('live:state', update)
+    }
     if (update.phase !== previousPhase) { previousPhase = update.phase; logRuntime('live-phase', `${update.id} ${update.phase}`) }
+    if (instance.ended && releasedAt === undefined) releasedAt = Date.now()
+    if (update.phase === 'failed') acceptingInput = false
     if (!firstText && (update.text || update.draft)) { firstText = true; logRuntime('live-first-text-ms', String(Date.now() - instance.startedAt)) }
     if ((update.text || update.draft || update.phase === 'failed' || update.phase === 'done') && (!item || item.text !== update.text || Date.now() - lastWrite > 1000 || update.phase === 'done' || update.phase === 'failed')) {
       if (!item) {
@@ -801,52 +831,65 @@ function startLiveSession(targetHwnd: number, targetFocusHwnd: number): void {
       broadcastState()
     }
     if (update.phase === 'done' || (update.phase === 'failed' && instance.ended)) {
-      setOverlayState({ mode: update.phase === 'done' ? 'success' : 'error', message: update.error })
-      if (update.phase === 'done') liveHideTimer = setTimeout(() => {
+      if (releasedAt !== undefined) logRuntime('live-finalization-ms', `${instance.id} ${Date.now() - releasedAt}`)
+      if (current) setOverlayState({ mode: update.phase === 'done' ? 'success' : 'error', message: update.error })
+      if (current && update.phase === 'done') liveHideTimer = setTimeout(() => {
         if (liveSession === instance) { liveUpdate = null; setOverlayState({ mode: 'idle' }) }
       }, 2000)
+      void turn.finish().then(() => {
+        if (update.phase === 'done' || liveSession !== instance) {
+          if (run.stopTimer) clearTimeout(run.stopTimer)
+          liveSessions.delete(instance.id)
+          instance.dispose()
+        }
+      })
     }
   }
   const textQueue = new CoalescedText(job => {
-    livePasteQueue = livePasteQueue.then(job).catch(() => { acceptingInput = false })
+    turn.enqueue(async () => {
+      try { await job() }
+      catch { acceptingInput = false; logRuntime('live-input-error', instance.id) }
+    })
   }, async text => {
     pasteTargetHwnd = targetHwnd
     pasteTargetFocusHwnd = targetFocusHwnd
-      const epoch = inputEpoch
-      const ok = await deliverClipboard(text, {
-        snapshot: () => ({ text: clipboard.readText(), html: clipboard.readHTML(), rtf: clipboard.readRTF(), image: clipboard.readImage() }),
-        write: value => clipboard.writeText(value),
-        owns: value => clipboard.readText() === value && !clipboard.readHTML() && !clipboard.readRTF() && clipboard.readImage().isEmpty(),
-        restore: value => clipboard.write(value)
-      }, () => new Promise<boolean>(resolve => {
-        const child = sendKeyboardCommand(targetHwnd, targetFocusHwnd)
-        child.once('close', code => { logRuntime('live-input-result', `${instance.id} code=${code}`); resolve(code === 0) })
-        child.once('error', () => resolve(false))
-      }), () => liveSession === instance && acceptingInput && !liveInputBlocked)
-      if (!ok) {
-        acceptingInput = false; undoAvailable = false
-        inputFailure = '文字已保存，但输入目标发生变化或拒绝输入。'
-        if (item) { item.error = inputFailure; journalText({ item }); persist(); broadcastState() }
-        return false
-      }
-      lastPasteTargetHwnd = targetHwnd
-      undoAvailable = epoch === inputEpoch
-      return true
-  }, () => liveSession === instance && acceptingInput && !liveInputBlocked && Boolean(targetHwnd))
-  const onSentence = (text: string): void => textQueue.append(text)
+    const queuedAt = Date.now()
+    const ok = await deliverClipboard(text, {
+      snapshot: () => ({ text: clipboard.readText(), html: clipboard.readHTML(), rtf: clipboard.readRTF(), image: clipboard.readImage() }),
+      write: value => clipboard.writeText(value),
+      owns: value => clipboard.readText() === value && !clipboard.readHTML() && !clipboard.readRTF() && clipboard.readImage().isEmpty(),
+      restore: value => clipboard.write(value)
+    }, () => new Promise<boolean>(resolve => {
+      const child = sendKeyboardCommand(targetHwnd, targetFocusHwnd)
+      child.once('close', code => { logRuntime('live-input-result', `${instance.id} code=${code} helperMs=${Date.now() - queuedAt}`); resolve(code === 0) })
+      child.once('error', () => resolve(false))
+    }), () => liveSessions.has(instance.id) && acceptingInput && epoch === inputEpoch && !isQuitting)
+    if (!ok) {
+      acceptingInput = false; undoAvailable = false
+      inputFailure = '文字已保存，但输入目标发生变化或拒绝输入。'
+      if (item) { item.error = inputFailure; journalText({ item }); persist(); broadcastState() }
+      return false
+    }
+    lastPasteTargetHwnd = targetHwnd
+    undoAvailable = epoch === inputEpoch
+    return true
+  }, () => liveSessions.has(instance.id) && acceptingInput && epoch === inputEpoch && Boolean(targetHwnd) && !isQuitting)
+  const onSentence = (text: string): void => {
+    if (!firstConfirmed) { firstConfirmed = true; logRuntime('live-first-confirmed-ms', `${instance.id} ${Date.now() - instance.startedAt}`) }
+    textQueue.append(text)
+  }
   const instance: RealtimeSession | BatchSession = realtime
-    ? new RealtimeSession(snapshot.qwenApiKey, snapshot.language, onUpdate, onSentence)
+    ? new RealtimeSession(snapshot.qwenApiKey, snapshot.language, onUpdate, onSentence, logRuntime)
     : new BatchSession(audio => snapshot.provider === 'qwen' ? requestQwen(audio, 'audio/wav', true, snapshot)
       : snapshot.provider === 'volcano' ? transcribeVolcano(audio, snapshot)
       : Promise.resolve('这是一次 FlowType 演示识别。'), onUpdate, onSentence)
   liveSession = instance
+  liveSessions.set(instance.id, { session: instance, finishInput: () => turn.finish() })
   instance.connect()
   const command = { type: 'start', id: instance.id }
   if (!captureReady) pendingCaptureStart = command
   else captureWindow?.webContents.send('live:capture', command)
 }
-
-let livePasteQueue = Promise.resolve()
 
 function stopRecording(): void {
   if (!recording) return
@@ -863,10 +906,17 @@ function stopRecording(): void {
       return
     }
     captureWindow?.webContents.send('live:capture', { type: 'stop', id: instance.id })
-    if (captureStopTimer) clearTimeout(captureStopTimer)
-    captureStopTimer = setTimeout(() => {
-      if (liveSession === instance && !instance.ended) { instance.finish(); captureWindow?.reload(); logRuntime('capture-stop-timeout') }
-    }, 10_000)
+    const run = liveSessions.get(instance.id)
+    if (run) {
+      if (run.stopTimer) clearTimeout(run.stopTimer)
+      run.stopTimer = setTimeout(() => {
+        if (!instance.ended) {
+          instance.finish()
+          if (!recording && liveSession === instance) captureWindow?.reload()
+          logRuntime('capture-stop-timeout', instance.id)
+        }
+      }, run.captureStarted ? 1500 : 10_000)
+    }
     broadcastState()
     return
   }
@@ -880,6 +930,10 @@ function cancelRecording(): void {
     captureWindow?.webContents.send('live:capture', { type: 'stop', id: liveSession.id })
     if (!settings.warmMicrophone || captureSuspended) captureWindow?.webContents.send('live:capture', { type: captureSuspended ? 'release' : 'standby', id: '' })
     liveSession.dispose()
+    const run = liveSessions.get(liveSession.id)
+    if (run?.stopTimer) clearTimeout(run.stopTimer)
+    void run?.finishInput()
+    liveSessions.delete(liveSession.id)
     liveSession = null
     liveUpdate = null
   }
@@ -1356,9 +1410,11 @@ function registerIpc(): void {
     if (event.sender === captureWindow?.webContents) microphoneReady = Boolean(ready)
   })
   ipcMain.on('live:capture-started', (event, id: string) => {
-    if (event.sender !== captureWindow?.webContents || liveSession?.id !== id || !recording) return
-    logRuntime('capture-key-to-start-ms', String(Date.now() - liveSession.startedAt))
-    setOverlayState({ mode: 'recording', startedAt: liveSession.startedAt })
+    const run = liveSessions.get(id)
+    if (event.sender !== captureWindow?.webContents || !run) return
+    run.captureStarted = true
+    logRuntime('capture-key-to-start-ms', `${id} ${Date.now() - run.session.startedAt}`)
+    if (liveSession?.id === id && recording) setOverlayState({ mode: 'recording', startedAt: run.session.startedAt })
   })
   ipcMain.on('live:capture-ready', event => {
     if (event.sender !== captureWindow?.webContents) return
@@ -1369,16 +1425,20 @@ function registerIpc(): void {
     } else syncMicrophonePreparation()
   })
   ipcMain.on('live:pcm', (event, id: string, pcm: Uint8Array) => {
-    if (event.sender === captureWindow?.webContents && liveSession?.id === id) {
-      if (firstPcmSession !== id) { firstPcmSession = id; logRuntime('capture-key-to-first-pcm-ms', String(Date.now() - liveSession.startedAt)) }
-      liveSession.append(pcm)
+    const run = liveSessions.get(id)
+    if (event.sender === captureWindow?.webContents && run) {
+      if (firstPcmSession !== id) { firstPcmSession = id; logRuntime('capture-key-to-first-pcm-ms', `${id} ${Date.now() - run.session.startedAt}`) }
+      run.session.append(pcm)
     }
   })
   ipcMain.on('live:finish', (event, id: string) => {
-    if (event.sender === captureWindow?.webContents && liveSession?.id === id) {
-      if (captureStopTimer) clearTimeout(captureStopTimer)
-      liveSession.finish()
-      if (!settings.warmMicrophone || captureSuspended) captureWindow?.webContents.send('live:capture', { type: captureSuspended ? 'release' : 'standby', id: '' })
+    const run = liveSessions.get(id)
+    if (event.sender === captureWindow?.webContents && run) {
+      if (run.stopTimer) clearTimeout(run.stopTimer)
+      run.session.finish()
+      if (!recording && liveSession?.id === id && (!settings.warmMicrophone || captureSuspended)) {
+        captureWindow?.webContents.send('live:capture', { type: captureSuspended ? 'release' : 'standby', id: '' })
+      }
     }
   })
   ipcMain.handle('live:retry', () => liveSession?.retry())
@@ -1551,7 +1611,7 @@ app.on('before-quit', event => {
   isQuitting = true
   if (quitFlushed) return
   event.preventDefault()
-  liveSession?.dispose()
+  for (const run of liveSessions.values()) { run.session.dispose(); void run.finishInput() }
   void persistQueue.finally(() => {
     if (!persistFailed) {
       try { writeFileSync(join(app.getPath('userData'), 'dictation-text.jsonl'), '', 'utf8') } catch { /* Replay is idempotent. */ }
@@ -1564,9 +1624,12 @@ app.on('before-quit', event => {
 app.on('will-quit', () => {
   isQuitting = true
   stopInputWorker()
-  liveSession?.dispose()
+  for (const run of liveSessions.values()) {
+    run.session.dispose()
+    if (run.stopTimer) clearTimeout(run.stopTimer)
+  }
+  liveSessions.clear()
   if (liveHideTimer) clearTimeout(liveHideTimer)
-  if (captureStopTimer) clearTimeout(captureStopTimer)
   stopHotkeyHooks()
   shortcutCapture?.kill()
   if (overlayTopMostTimer) clearInterval(overlayTopMostTimer)

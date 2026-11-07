@@ -1,6 +1,6 @@
 {
   "name": "flowtype",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "description": "Windows voice dictation utility with a floating recording bar",
   "author": "FlowType",
   "main": "out/main/index.js",
@@ -13,7 +13,7 @@
     "dist:portable": "npm run build && electron-builder --win dir && powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-portable.ps1",
     "dist:signed": "npm run build && electron-builder --win nsis -c.win.signAndEditExecutable=true",
     "typecheck": "tsc --noEmit",
-    "test": "node scripts/test-transcript-ledger.mjs && node scripts/test-realtime-session.mjs && node scripts/test-batch-session.mjs && node scripts/test-native-input.mjs && node scripts/test-clipboard-delivery.mjs && node scripts/test-coalesced-text.mjs && node scripts/test-audio-preparation.mjs",
+    "test": "node scripts/test-transcript-ledger.mjs && node scripts/test-realtime-session.mjs && node scripts/test-realtime-throughput.mjs && node scripts/test-dictation-pipeline.mjs && node scripts/test-batch-session.mjs && node scripts/test-native-input.mjs && node scripts/test-clipboard-delivery.mjs && node scripts/test-coalesced-text.mjs && node scripts/test-audio-preparation.mjs",
     "test:desktop-internal": "node scripts/run-electron-check.mjs test-capture.cjs && node scripts/run-electron-check.mjs test-dashboard.cjs",
     "verify:realtime": "node scripts/run-electron-check.mjs verify-live-api.cjs --speech --flow",
     "verify:hotkeys": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-hotkeys.ps1",

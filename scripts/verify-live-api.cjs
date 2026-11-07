@@ -5,8 +5,8 @@ const WebSocket = require('ws')
 const { spawnSync } = require('node:child_process')
 const speech = process.argv.includes('--speech')
 app.setPath('userData', join(process.env.APPDATA, 'FlowType'))
-const timeout = setTimeout(() => { console.error('FAIL realtime API timed out'); app.exit(1) }, 45000)
-app.whenReady().then(() => {
+const timeout = setTimeout(() => { console.error('FAIL realtime API timed out'); app.exit(1) }, 90000)
+app.whenReady().then(async () => {
   const data = JSON.parse(readFileSync(join(process.env.APPDATA, 'FlowType', 'flowtype-data.json'), 'utf8'))
   const key = safeStorage.decryptString(Buffer.from(data.settings.qwenApiKeyEncrypted, 'base64'))
   let pcm = Buffer.alloc(3200)
@@ -25,32 +25,47 @@ app.whenReady().then(() => {
   }
   let finishing = false, previews = 0, finals = 0
   if (process.argv.includes('--flow')) {
-    const { buildSync } = require('esbuild')
+    const { build } = require('esbuild')
     const { Module } = require('node:module')
     const filename = join(__dirname, 'realtime-flow-fixture.cjs')
-    const output = buildSync({ entryPoints: [join(__dirname, '../src/main/realtime-session.ts')], bundle: true, platform: 'node', format: 'cjs', packages: 'external', write: false })
+    const baseline = process.argv.includes('--baseline')
+    const plugins = baseline ? [{ name: 'baseline-062', setup(builder) {
+      builder.onLoad({ filter: /realtime-session\.ts$/ }, () => {
+        const source = spawnSync('git', ['show', '6170d0ce132edcc911f84e2863139f6d20507203:src/main/realtime-session.ts'], { cwd: join(__dirname, '..'), encoding: 'utf8', windowsHide: true })
+        if (source.status !== 0) throw new Error('Baseline v0.6.2 source unavailable')
+        return { contents: source.stdout, loader: 'ts' }
+      })
+    } }] : []
+    const output = await build({ entryPoints: [join(__dirname, '../src/main/realtime-session.ts')], bundle: true, platform: 'node', format: 'cjs', packages: 'external', write: false, plugins })
     const fixture = new Module(filename, module)
     fixture.filename = filename; fixture.paths = module.paths
     fixture._compile(output.outputFiles[0].text, filename)
-    let fed = false, early = 0
+    let early = 0, firstDraftMs, firstConfirmedMs, releasedAt
+    const startedAt = Date.now()
     const deltas = []
     const probe = new fixture.exports.RealtimeSession(key, 'auto', state => {
-      if (state.phase === 'listening' && !fed) {
-        fed = true
-        let offset = 0
-        const feed = setInterval(() => {
-          if (offset < pcm.length) { probe.append(pcm.subarray(offset, offset + 3200)); offset += 3200 }
-          else { clearInterval(feed); probe.finish() }
-        }, 100)
-      }
+      if ((state.draft || state.text) && firstDraftMs === undefined) firstDraftMs = Date.now() - startedAt
       if (state.phase === 'failed') { console.error('FAIL realtime flow:', state.error); probe.dispose(); app.exit(1) }
       if (state.phase === 'done') {
         if (!early || deltas.join('') !== state.text) { console.error('FAIL realtime flow:', JSON.stringify({early, increments: deltas.map(value => value.length), finalLength: state.text.length, matches: deltas.join('') === state.text})); app.exit(1); return }
         console.log(`PASS real realtime-session flow: ${early} confirmed increments before sentence completion; ${deltas.length} total increments; final text matches exactly; synthetic speech only`)
+        console.log(JSON.stringify({ source: baseline ? 'v0.6.2' : 'working-tree', frameMs: 20, audioMs: Math.round(pcm.length / 32), feedMs: releasedAt - startedAt, firstDraftMs, firstConfirmedMs, releaseToDoneMs: Date.now() - releasedAt }))
         clearTimeout(timeout); probe.dispose(); app.exit(0)
       }
-    }, (text, confirmedIncrement) => { if (confirmedIncrement) early++; deltas.push(text) })
+    }, (text, confirmedIncrement) => {
+      if (firstConfirmedMs === undefined) firstConfirmedMs = Date.now() - startedAt
+      if (confirmedIncrement) early++
+      deltas.push(text)
+    })
     probe.connect()
+    let offset = 0
+    const feedBegan = Date.now()
+    const feed = setInterval(() => {
+      // Match the worklet's audio clock, rather than stretching speech when Windows timers wake late.
+      const available = Math.min(pcm.length, Math.floor((Date.now() - feedBegan) / 20) * 640)
+      while (offset < available) { probe.append(pcm.subarray(offset, Math.min(offset + 640, pcm.length))); offset += 640 }
+      if (offset >= pcm.length) { clearInterval(feed); releasedAt = Date.now(); probe.finish() }
+    }, 10)
     return
   }
   let confirmedUpdates = 0

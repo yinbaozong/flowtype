@@ -39,7 +39,8 @@ export class RealtimeSession {
     private key: string,
     private language: string,
     private onUpdate: (update: LiveUpdate) => void,
-    private onSentence: (text: string, confirmedIncrement?: boolean) => void
+    private onSentence: (text: string, confirmedIncrement?: boolean) => void,
+    private diagnostic: (event: string, detail: string) => void = () => {}
   ) {}
 
   connect(): void {
@@ -115,7 +116,10 @@ export class RealtimeSession {
       } catch { this.fail('实时响应格式错误 / Invalid realtime response') }
     })
     socket.on('error', error => { if (valid()) this.fail(error.message) })
-    socket.on('close', () => { if (valid() && this.phase !== 'done') this.fail('实时连接已断开 / Connection closed') })
+    socket.on('close', code => {
+      this.diagnostic('live-socket-close', `${this.id} generation=${generation} code=${code}`)
+      if (valid() && this.phase !== 'done') this.fail('实时连接已断开 / Connection closed')
+    })
     this.emit()
   }
 
@@ -131,6 +135,7 @@ export class RealtimeSession {
     if (this.ended || this.disposed) return
     this.ended = true
     this.durationMs = Date.now() - this.startedAt
+    this.diagnostic('live-upload-pending-ms', `${this.id} ${this.audio.slice(this.sent).reduce((sum, chunk) => sum + chunk.length, 0) / 32}`)
     if (!this.failed) {
       this.phase = 'finishing'
       if (this.ready) this.sendFinish()
@@ -171,14 +176,25 @@ export class RealtimeSession {
   }
   private flush(): void {
     if (this.pumpTimer || this.failed || !this.ready) return
-    if (this.sent < this.audio.length) {
+    // Capture already runs at realtime speed. A second per-frame timer accumulates delay.
+    const budget = this.retried ? 3200 : 32_000
+    let transmitted = 0
+    while (this.sent < this.audio.length && transmitted < budget) {
       if ((this.socket?.bufferedAmount || 0) > 4_000_000) { this.fail('网络发送积压 / Network backpressure'); return }
-      this.send({ type: 'input_audio_buffer.append', audio: this.audio[this.sent++].toString('base64') })
+      const chunks: Buffer[] = []
+      let bytes = 0
+      while (this.sent < this.audio.length && bytes < 3200) {
+        const chunk = this.audio[this.sent++]
+        chunks.push(chunk)
+        bytes += chunk.length
+      }
+      this.send({ type: 'input_audio_buffer.append', audio: Buffer.concat(chunks).toString('base64') })
+      transmitted += bytes
     }
     if (this.sent < this.audio.length) this.pumpTimer = setTimeout(() => {
       this.pumpTimer = undefined
       this.flush()
-    }, 20)
+    }, this.retried ? 20 : 0)
     else if (this.ended && !this.finishSent && !this.failed) {
       this.finishSent = true
       this.send({ type: 'session.finish' })
