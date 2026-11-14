@@ -329,7 +329,7 @@ function SettingsPage({
   onSave,
   t
 }: {
-  settings: AppSettings & { hasQwenApiKey?: boolean; hasVolcanoApiKey?: boolean }
+  settings: AppSettings & { hasQwenApiKey?: boolean; hasVolcanoApiKey?: boolean; hasDeepSeekApiKey?: boolean }
   onSave: (settings: AppSettings) => Promise<void>
   t: Translator
 }): React.JSX.Element {
@@ -413,9 +413,11 @@ function SettingsPage({
       <section className="settings-group">
         <div className="settings-group__title"><h2>{t('recognitionSettings')}</h2><p>{t('recognitionSettingsDescription')}</p></div>
         <div className="settings-fields">
-          <label><span>{t('recognitionService')}</span><select value={draft.provider} onChange={(event) => update('provider', event.target.value as Provider)}><option value="demo">{t('providerDemo')}</option><option value="qwen">{t('providerQwen')}</option><option value="volcano">{t('providerVolcano')}</option></select></label>
+          <label><span>{t('recognitionService')}</span><select value={draft.provider} onChange={(event) => update('provider', event.target.value as Provider)}><option value="demo">{t('providerDemo')}</option><option value="qwen">{t('providerQwen')}</option><option value="volcano">{t('providerVolcano')}</option><option value="deepseek">{t('providerDeepSeek')}</option></select></label>
           <label className="toggle-row"><span><strong>{draft.uiLanguage === 'en' ? 'Prewarm microphone' : '预热麦克风'}</strong><small>{draft.uiLanguage === 'en' ? 'Off: microphone opens only on press. On: lower start delay, Windows may show microphone in use.' : '默认关闭，仅按键时打开麦克风；开启可进一步减少准备时间，但 Windows 可能显示占用。'}</small></span><input type="checkbox" checked={Boolean(draft.warmMicrophone)} onChange={event => update('warmMicrophone', event.target.checked)} /></label>
-          {draft.provider === 'qwen' ? <label><span>{draft.uiLanguage === 'en' ? 'Recognition mode' : '识别方式'}</span><select value={draft.recognitionMode || 'realtime'} onChange={event => update('recognitionMode', event.target.value as 'realtime' | 'batch')}><option value="realtime">{draft.uiLanguage === 'en' ? 'Realtime, continuous output' : '实时识别，连续出字'}</option><option value="batch">{draft.uiLanguage === 'en' ? 'Transcribe after release' : '松手后整段识别'}</option></select></label> : null}
+          {draft.provider === 'qwen' || draft.provider === 'volcano' ? <label><span>{draft.uiLanguage === 'en' ? 'Recognition mode' : '识别方式'}</span><select value={draft.recognitionMode || 'realtime'} onChange={event => update('recognitionMode', event.target.value as 'realtime' | 'batch')}><option value="realtime">{draft.uiLanguage === 'en' ? 'Realtime, continuous output' : '实时识别，连续出字'}</option><option value="batch">{draft.uiLanguage === 'en' ? 'Transcribe after release' : '松手后整段识别'}</option></select></label> : null}
+          {draft.provider === 'deepseek' ? <p>{draft.uiLanguage === 'en' ? 'Official DeepSeek ASR: automatic language detection, transcription after release. Chat model pricing does not apply to speech.' : '使用 DeepSeek 官方 ASR，自动检测语种，松手后识别。语音单独计费，不使用聊天模型的 Token 价格。'}</p> : null}
+          {draft.provider === 'volcano' && draft.recognitionMode !== 'batch' ? <label><span>{draft.uiLanguage === 'en' ? 'Streaming speech resource' : '流式语音服务资源'}</span><select value={draft.volcanoResourceId || 'volc.seedasr.sauc.duration'} onChange={event => update('volcanoResourceId', event.target.value)}>{['volc.seedasr.sauc.duration', 'volc.seedasr.sauc.concurrent', 'volc.bigasr.sauc.duration', 'volc.bigasr.sauc.concurrent'].map(id => <option key={id} value={id}>{id}</option>)}</select><small>{draft.uiLanguage === 'en' ? 'Enable Doubao Streaming ASR in the speech console. Use a speech API Key, not an Ark chat-model Key. Realtime supports Chinese and English; confirmed sentences are inserted.' : '请在豆包语音控制台开通流式语音识别，使用语音 API Key，不是方舟聊天模型 Key。默认 2.0 小时版；实时支持中英文，按定稿分句输入。'}</small></label> : null}
           <label><span>{t('recognitionLanguage')}</span><select value={draft.language} onChange={(event) => update('language', event.target.value as AppSettings['language'])}><option value="auto">{t('autoDetect')}</option><option value="zh">{t('chinese')}</option><option value="en">{t('english')}</option><option value="ja">{t('japanese')}</option><option value="yue">{t('cantonese')}</option></select></label>
           <div className="shortcut-setting">
             <span>{t('globalShortcut')}</span>
@@ -465,6 +467,7 @@ function SettingsPage({
         <div className="settings-fields">
           <label><span>Qwen API Key {settings.hasQwenApiKey ? <em>{t('configured')}</em> : null}</span><input type="password" value={draft.qwenApiKey} onChange={(event) => setDraft((current) => ({ ...current, qwenApiKey: event.target.value, provider: event.target.value ? 'qwen' : current.provider }))} placeholder={settings.hasQwenApiKey ? t('replaceKey') : 'sk-...'} /></label>
           <label><span>Volcano API Key {settings.hasVolcanoApiKey ? <em>{t('configured')}</em> : null}</span><input type="password" value={draft.volcanoApiKey} onChange={(event) => update('volcanoApiKey', event.target.value)} placeholder={settings.hasVolcanoApiKey ? t('replaceKey') : t('consoleApiKey')} /></label>
+          <label><span>DeepSeek API Key {settings.hasDeepSeekApiKey ? <em>{t('configured')}</em> : null}</span><input type="password" value={draft.deepseekApiKey || ''} onChange={event => update('deepseekApiKey', event.target.value)} placeholder={settings.hasDeepSeekApiKey ? t('replaceKey') : 'sk-...'} /></label>
           <label><span>Volcano App ID ({t('optional')})</span><input value={draft.volcanoAppId} onChange={(event) => update('volcanoAppId', event.target.value)} placeholder={t('volcanoAppIdHint')} /></label>
           <label><span>{t('volcanoAccessKey')}</span><input type="password" value={draft.volcanoAccessKey} onChange={(event) => update('volcanoAccessKey', event.target.value)} placeholder={t('leaveEmpty')} /></label>
           <button className="secondary-button provider-test-button" disabled={testing} onClick={() => void testProvider()}>{testing ? t('verifying') : t('verifyProvider')}</button>
@@ -489,7 +492,7 @@ export function App(): React.JSX.Element {
     setState(await window.flowApi.saveSettings(next))
   }
 
-  const activeSettings: AppSettings & { hasQwenApiKey?: boolean; hasVolcanoApiKey?: boolean } = state.settings
+  const activeSettings: AppSettings & { hasQwenApiKey?: boolean; hasVolcanoApiKey?: boolean; hasDeepSeekApiKey?: boolean } = state.settings
 
   return (
     <div className="app-shell" lang={uiLanguage === 'en' ? 'en' : 'zh-CN'}>

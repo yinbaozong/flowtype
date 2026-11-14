@@ -25,6 +25,11 @@ const output = await build({
           edit: invalidateLiveInput,
           overlay() { return overlayState.mode; },
           capture() { return captureWindow.webContents; },
+          credentials() {
+            const stored = toStoredSettings({ ...settings, deepseekApiKey: 'new-provider-secret' });
+            settings = fromStoredSettings(stored);
+            return { stored, public: publicSettings(), restored: settings.deepseekApiKey };
+          },
           close() { isQuitting = true; cancelRecording(); }
         };
       `
@@ -92,6 +97,11 @@ const start = () => {
 mock.timers.enable({ apis: ['setTimeout', 'Date'] })
 try {
   fixture.initialize()
+  const credentials = fixture.credentials()
+  assert.equal(credentials.restored, 'new-provider-secret')
+  assert.equal(credentials.stored.deepseekApiKey, undefined, 'new secret is not stored in plaintext')
+  assert.equal(credentials.public.deepseekApiKey, '', 'renderer does not receive saved secrets')
+  assert.equal(credentials.public.hasDeepSeekApiKey, true)
   const first = start()
   fixture.stop(); finishCapture(first.id)
   assert.equal(fixture.state().recording, false)

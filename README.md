@@ -26,7 +26,9 @@ FlowType is a Windows desktop voice dictation tool built with Electron, React, a
 
 ## The Experience
 
-Version 0.6.3 defaults to `qwen3-asr-flash-realtime` for Qwen. Realtime mode inserts each confirmed increment immediately and appends only the remaining suffix at sentence completion, with no separate transcript popup. The model may confirm several words together; network and model latency still apply. Volcano retains batch recognition. The draggable green bar keeps its existing size, including the 44px minimum.
+Version 0.7.0 adds **DeepSeek official ASR (batch)** and **Doubao / Volcano streaming ASR** alongside Qwen. DeepSeek does not currently support streaming recognition. Doubao supports speech-specific API keys and selectable streaming resources. Existing credentials and microphone privacy preferences are retained. See [provider setup and limitations](docs/speech-providers.md).
+
+Version 0.7.0 defaults to `qwen3-asr-flash-realtime` for Qwen. Realtime mode inserts each confirmed increment immediately and appends only the remaining suffix at sentence completion, with no separate transcript popup. The model may confirm several words together; network and model latency still apply. Volcano now offers realtime and batch recognition. The draggable green bar keeps its existing size, including the 44px minimum.
 
 Audio upload now follows the capture clock without a second per-frame delay. After releasing the shortcut, you can immediately press it again to start the next recording while the previous cloud request finishes in the background. Text is delivered in recording order; manual typing or changing focus stops pending automatic insertion without blocking normal keyboard input. See the [latency investigation and measured comparison](docs/latency-0.6.3.md).
 
@@ -49,7 +51,7 @@ No cloud account is bundled with the app. Users configure their own speech API k
 Most users should install from GitHub Releases:
 
 1. Open the latest release: https://github.com/yinbaozong/flowtype/releases/latest
-2. The same `v0.6.3` release contains both downloads: `FlowType.Portable.0.6.3.zip` for portable use and `FlowType.Setup.0.6.3.exe` for normal installation.
+2. The same `v0.7.0` release contains both downloads: `FlowType.Portable.0.7.0.zip` for portable use and `FlowType.Setup.0.7.0.exe` for normal installation.
 3. For the portable build, extract the complete ZIP to a fixed folder and run `FlowType.exe`. For the installer, run the EXE and choose an installation directory.
 4. If Windows warns that the publisher is unknown, only continue if you trust the downloaded file.
 5. Start FlowType, open Settings, and add your own speech API key.
@@ -106,7 +108,7 @@ Build the Smart App Control-compatible portable archive used for local unsigned 
 npm run dist:portable
 ```
 
-The portable archive is written to `release/FlowType Portable 0.6.3.zip`. It keeps the original Electron executable byte-for-byte and packages FlowType in the adjacent `resources/app.asar` file. The installer is written to `release/FlowType Setup 0.6.3.exe`.
+The portable archive is written to `release/FlowType Portable 0.7.0.zip`. It keeps the original Electron executable byte-for-byte and packages FlowType in the adjacent `resources/app.asar` file. The installer is written to `release/FlowType Setup 0.7.0.exe`.
 
 ## First Setup
 

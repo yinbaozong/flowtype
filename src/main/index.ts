@@ -23,6 +23,7 @@ import { runInput, stopInputWorker } from './input-worker'
 import { deliverClipboard } from './clipboard-delivery'
 import { CoalescedText } from './coalesced-text'
 import { OrderedInput } from './ordered-input'
+import { requestDeepSeek, VolcanoSession } from './speech-providers'
 import type { EventEmitter } from 'node:events'
 import type {
   AppSettings,
@@ -34,7 +35,8 @@ import type {
   TranscribeRequest
 } from '../shared/types'
 
-type StoredSettings = Omit<AppSettings, 'qwenApiKey' | 'volcanoApiKey' | 'volcanoAccessKey'> & {
+type StoredSettings = Omit<AppSettings, 'qwenApiKey' | 'volcanoApiKey' | 'volcanoAccessKey' | 'deepseekApiKey'> & {
+  deepseekApiKeyEncrypted?: string
   qwenApiKeyEncrypted: string
   volcanoApiKeyEncrypted: string
   volcanoAccessKeyEncrypted: string
@@ -62,6 +64,8 @@ const defaults: AppSettings = {
   volcanoApiKey: '',
   volcanoAppId: '',
   volcanoAccessKey: '',
+  deepseekApiKey: '',
+  volcanoResourceId: 'volc.seedasr.sauc.duration',
   dictionary: []
 }
 
@@ -79,9 +83,9 @@ let microphoneReady = false
 let firstPcmSession = ''
 let captureSuspended = false
 let pendingCaptureStart: { type: string; id: string } | null = null
-let liveSession: RealtimeSession | BatchSession | null = null
+let liveSession: RealtimeSession | BatchSession | VolcanoSession | null = null
 interface DictationRun {
-  session: RealtimeSession | BatchSession
+  session: RealtimeSession | BatchSession | VolcanoSession
   finishInput(): Promise<void>
   captureStarted?: boolean
   update?: LiveUpdate
@@ -159,9 +163,10 @@ function decrypt(value: string): string {
 }
 
 function toStoredSettings(value: AppSettings): StoredSettings {
-  const { qwenApiKey, volcanoApiKey, volcanoAccessKey, ...publicFields } = value
+  const { qwenApiKey, volcanoApiKey, volcanoAccessKey, deepseekApiKey, ...publicFields } = value
   return {
     ...publicFields,
+    deepseekApiKeyEncrypted: encrypt(deepseekApiKey || ''),
     qwenApiKeyEncrypted: encrypt(qwenApiKey),
     volcanoApiKeyEncrypted: encrypt(volcanoApiKey),
     volcanoAccessKeyEncrypted: encrypt(volcanoAccessKey)
@@ -174,6 +179,7 @@ function fromStoredSettings(value?: Partial<StoredSettings>): AppSettings {
   return {
     ...defaults,
     ...value,
+    deepseekApiKey: decrypt(value.deepseekApiKeyEncrypted || ''),
     shortcut: shortcut || defaults.shortcut,
     qwenApiKey: decrypt(value.qwenApiKeyEncrypted ?? ''),
     volcanoApiKey: decrypt(value.volcanoApiKeyEncrypted ?? ''),
@@ -242,6 +248,8 @@ function recoverJournal(): void {
 function publicSettings(): PublicSettings {
   return {
     ...settings,
+    deepseekApiKey: '',
+    hasDeepSeekApiKey: Boolean(settings.deepseekApiKey),
     qwenApiKey: '',
     volcanoApiKey: '',
     volcanoAccessKey: '',
@@ -799,7 +807,7 @@ function startLiveSession(targetHwnd: number, targetFocusHwnd: number): void {
   let releasedAt: number | undefined
   const epoch = inputEpoch
   const turn = orderedInput.begin()
-  const realtime = snapshot.provider === 'qwen' && snapshot.recognitionMode !== 'batch'
+  const realtime = (snapshot.provider === 'qwen' || snapshot.provider === 'volcano') && snapshot.recognitionMode !== 'batch'
   const onUpdate = (update: LiveUpdate): void => {
     const run = liveSessions.get(instance.id)
     if (!run) return
@@ -816,7 +824,7 @@ function startLiveSession(targetHwnd: number, targetFocusHwnd: number): void {
     if ((update.text || update.draft || update.phase === 'failed' || update.phase === 'done') && (!item || item.text !== update.text || Date.now() - lastWrite > 1000 || update.phase === 'done' || update.phase === 'failed')) {
       if (!item) {
         item = { id: instance.id, text: '', createdAt: new Date(instance.startedAt).toISOString(), durationMs: 0,
-          language: snapshot.language, provider: snapshot.provider, targetApp: '当前应用', status: 'success', model: realtime ? 'qwen3-asr-flash-realtime' : snapshot.provider === 'qwen' ? 'qwen3-asr-flash' : providerLabels[snapshot.provider] }
+          language: snapshot.language, provider: snapshot.provider, targetApp: '当前应用', status: 'success', model: realtime ? snapshot.provider === 'volcano' ? snapshot.volcanoResourceId || 'volc.seedasr.sauc.duration' : 'qwen3-asr-flash-realtime' : snapshot.provider === 'qwen' ? 'qwen3-asr-flash' : providerLabels[snapshot.provider] }
         data.history.unshift(item)
       }
       item.text = update.text
@@ -878,10 +886,13 @@ function startLiveSession(targetHwnd: number, targetFocusHwnd: number): void {
     if (!firstConfirmed) { firstConfirmed = true; logRuntime('live-first-confirmed-ms', `${instance.id} ${Date.now() - instance.startedAt}`) }
     textQueue.append(text)
   }
-  const instance: RealtimeSession | BatchSession = realtime
+  const instance: RealtimeSession | BatchSession | VolcanoSession = realtime && snapshot.provider === 'volcano'
+    ? new VolcanoSession(snapshot, onUpdate, onSentence)
+    : realtime
     ? new RealtimeSession(snapshot.qwenApiKey, snapshot.language, onUpdate, onSentence, logRuntime)
     : new BatchSession(audio => snapshot.provider === 'qwen' ? requestQwen(audio, 'audio/wav', true, snapshot)
       : snapshot.provider === 'volcano' ? transcribeVolcano(audio, snapshot)
+      : snapshot.provider === 'deepseek' ? requestDeepSeek(audio, snapshot.deepseekApiKey || '')
       : Promise.resolve('这是一次 FlowType 演示识别。'), onUpdate, onSentence)
   liveSession = instance
   liveSessions.set(instance.id, { session: instance, finishInput: () => turn.finish() })
@@ -996,6 +1007,7 @@ async function mergeSettings(next: AppSettings): Promise<void> {
   settings = {
     ...settings,
     ...next,
+    deepseekApiKey: next.deepseekApiKey?.trim() || settings.deepseekApiKey || '',
     provider: next.provider === 'demo' && next.qwenApiKey.trim() ? 'qwen' : next.provider,
     shortcut: normalizedShortcut,
     undoShortcut: normalizedUndoShortcut,
@@ -1165,6 +1177,7 @@ async function transcribeVolcano(audio: Uint8Array, config = settings): Promise<
 }
 
 async function transcribeAudio(request: TranscribeRequest): Promise<string> {
+  if (settings.provider === 'deepseek') return requestDeepSeek(request.audio, settings.deepseekApiKey || '')
   if (settings.provider === 'qwen') return transcribeQwen(request.audio, request.mimeType)
   if (settings.provider === 'volcano') return transcribeVolcano(request.audio)
   return '这是一次 FlowType 演示识别。请在设置中配置千问或火山引擎 API Key。'
@@ -1367,7 +1380,8 @@ function undoLastVoiceInput(currentHwnd: number, currentFocusHwnd: number): void
 const providerLabels: Record<Provider, string> = {
   demo: '演示模式',
   qwen: '千问 Qwen3-ASR-Flash',
-  volcano: '火山引擎 BigModel ASR'
+  volcano: '豆包 / 火山引擎 ASR',
+  deepseek: 'DeepSeek ASR'
 }
 
 function historyExportContent(): { content: string; count: number } {
@@ -1487,13 +1501,27 @@ function registerIpc(): void {
     setTimeout(() => setOverlayState({ mode: 'idle' }), 2400)
   })
   ipcMain.handle('provider:test', async () => {
+    if (settings.provider === 'deepseek') {
+      await requestDeepSeek(silentWav(), settings.deepseekApiKey || '', fetch, true)
+      return { ok: true, message: 'DeepSeek 语音识别连接成功 / ASR connected' }
+    }
     if (settings.provider === 'qwen') {
       await requestQwen(silentWav(), 'audio/wav', false)
       return { ok: true, message: '千问 API Key 连接成功' }
     }
     if (settings.provider === 'volcano') {
       if (!settings.volcanoApiKey) throw new Error('请先填写火山 API Key')
-      return { ok: true, message: '火山 API Key 已保存，请用一次录音验证服务权限' }
+      return new Promise<{ ok: boolean; message: string }>((resolve, reject) => {
+        const probe = new VolcanoSession(settings, state => {
+          if (state.phase === 'listening') { probe.append(new Uint8Array(16000)); probe.finish() }
+          if (state.phase === 'done' || state.phase === 'failed') {
+            probe.dispose()
+            if (state.phase === 'done' || state.error?.startsWith('未识别到语音') || state.error === 'Volcano ASR error 45000002') resolve({ ok: true, message: '豆包语音鉴权与协议验证成功 / Speech API connected' })
+            else reject(new Error(state.error))
+          }
+        }, () => {})
+        probe.connect()
+      })
     }
     throw new Error('请先选择千问或火山识别服务')
   })

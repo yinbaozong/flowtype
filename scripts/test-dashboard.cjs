@@ -35,6 +35,14 @@ app.whenReady().then(async () => {
   window.webContents.send('state:changed', state)
   await new Promise(resolve => setTimeout(resolve, 100))
   if (!await window.webContents.executeJavaScript("Boolean(document.querySelector('button[title=\"Retry once\"]'))")) throw new Error('English retry failed')
+  await window.webContents.executeJavaScript("document.querySelectorAll('.sidebar nav button')[3].click()")
+  await new Promise(resolve => setTimeout(resolve, 150))
+  const providers = await window.webContents.executeJavaScript(`(() => {
+    const select = [...document.querySelectorAll('select')].find(el => [...el.options].some(option => option.value === 'deepseek'));
+    return select ? [...select.options].map(option => option.value) : [];
+  })()`)
+  if (!providers.includes('deepseek') || !providers.includes('volcano')) throw new Error('New provider options missing')
+  if (!await window.webContents.executeJavaScript("[...document.querySelectorAll('label')].some(el => el.textContent.includes('DeepSeek API Key') && el.querySelector('input[type=password]'))")) throw new Error('DeepSeek credential field missing')
   console.log('PASS hidden dashboard: history retry/dismiss, English actions, no standalone preview')
   clearTimeout(timer); window.destroy(); app.quit()
 }).catch(error => { console.error('FAIL dashboard:', error.message); app.exit(1) })

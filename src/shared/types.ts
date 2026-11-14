@@ -1,4 +1,4 @@
-export type Provider = 'demo' | 'qwen' | 'volcano'
+export type Provider = 'demo' | 'qwen' | 'volcano' | 'deepseek'
 export type AppPage = 'overview' | 'history' | 'dictionary' | 'settings'
 
 export interface AppSettings {
@@ -19,12 +19,15 @@ export interface AppSettings {
   volcanoApiKey: string
   volcanoAppId: string
   volcanoAccessKey: string
+  volcanoResourceId?: string
+  deepseekApiKey?: string
   dictionary: string[]
 }
 
 export interface PublicSettings extends AppSettings {
   hasQwenApiKey: boolean
   hasVolcanoApiKey: boolean
+  hasDeepSeekApiKey?: boolean
   qwenApiKey: ''
   volcanoApiKey: ''
   volcanoAccessKey: ''

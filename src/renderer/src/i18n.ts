@@ -9,7 +9,8 @@ const zh = {
   navSettings: '设置',
   providerDemo: '演示模式',
   providerQwen: '千问 Qwen3-ASR',
-  providerVolcano: '火山大模型',
+  providerVolcano: '豆包语音 / 火山引擎',
+  providerDeepSeek: 'DeepSeek 语音（整段识别）',
   seconds: '{count} 秒',
   minutes: '{count} 分钟',
   today: '今天',
@@ -113,7 +114,8 @@ const en: Record<MessageKey, string> = {
   navSettings: 'Settings',
   providerDemo: 'Demo mode',
   providerQwen: 'Qwen Qwen3-ASR',
-  providerVolcano: 'Volcano BigModel',
+  providerVolcano: 'Doubao / Volcano Speech',
+  providerDeepSeek: 'DeepSeek ASR (batch)',
   seconds: '{count} sec',
   minutes: '{count} min',
   today: 'Today',
@@ -224,5 +226,5 @@ export function localeTag(language: UiLanguage): string {
 }
 
 export function providerName(provider: Provider, t: Translator): string {
-  return t(provider === 'demo' ? 'providerDemo' : provider === 'qwen' ? 'providerQwen' : 'providerVolcano')
+  return t(provider === 'demo' ? 'providerDemo' : provider === 'qwen' ? 'providerQwen' : provider === 'deepseek' ? 'providerDeepSeek' : 'providerVolcano')
 }
