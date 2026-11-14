@@ -24,6 +24,7 @@ import { deliverClipboard } from './clipboard-delivery'
 import { CoalescedText } from './coalesced-text'
 import { OrderedInput } from './ordered-input'
 import { requestDeepSeek, VolcanoSession } from './speech-providers'
+import { publicProviderSettings, providerStatus } from '../shared/provider-status'
 import type { EventEmitter } from 'node:events'
 import type {
   AppSettings,
@@ -246,16 +247,7 @@ function recoverJournal(): void {
 }
 
 function publicSettings(): PublicSettings {
-  return {
-    ...settings,
-    deepseekApiKey: '',
-    hasDeepSeekApiKey: Boolean(settings.deepseekApiKey),
-    qwenApiKey: '',
-    volcanoApiKey: '',
-    volcanoAccessKey: '',
-    hasQwenApiKey: Boolean(settings.qwenApiKey),
-    hasVolcanoApiKey: Boolean(settings.volcanoApiKey)
-  }
+  return publicProviderSettings(settings)
 }
 
 function getState(): AppState {
@@ -824,7 +816,7 @@ function startLiveSession(targetHwnd: number, targetFocusHwnd: number): void {
     if ((update.text || update.draft || update.phase === 'failed' || update.phase === 'done') && (!item || item.text !== update.text || Date.now() - lastWrite > 1000 || update.phase === 'done' || update.phase === 'failed')) {
       if (!item) {
         item = { id: instance.id, text: '', createdAt: new Date(instance.startedAt).toISOString(), durationMs: 0,
-          language: snapshot.language, provider: snapshot.provider, targetApp: '当前应用', status: 'success', model: realtime ? snapshot.provider === 'volcano' ? snapshot.volcanoResourceId || 'volc.seedasr.sauc.duration' : 'qwen3-asr-flash-realtime' : snapshot.provider === 'qwen' ? 'qwen3-asr-flash' : providerLabels[snapshot.provider] }
+          language: snapshot.language, provider: snapshot.provider, targetApp: '当前应用', status: 'success', model: providerStatus(snapshot).model }
         data.history.unshift(item)
       }
       item.text = update.text
@@ -1016,7 +1008,7 @@ async function mergeSettings(next: AppSettings): Promise<void> {
     overlayWidth: Math.min(280, Math.max(44, next.overlayWidth || settings.overlayWidth)),
     qwenApiKey,
     volcanoApiKey,
-    volcanoAccessKey: next.volcanoAccessKey || settings.volcanoAccessKey,
+    volcanoAccessKey: next.volcanoApiKey.trim() ? '' : next.volcanoAccessKey || settings.volcanoAccessKey,
     dictionary: [...new Set(next.dictionary.map((word) => word.trim()).filter(Boolean))]
   }
   if (shortcutChanged && !(await registerShortcut())) {

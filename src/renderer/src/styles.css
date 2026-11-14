@@ -906,3 +906,15 @@ select {
     animation-iteration-count: 1 !important;
   }
 }
+.service-summary {
+  padding: 14px 16px;
+  border: 1px solid #dfe8e2;
+  border-radius: 12px;
+  background: #f5f9f6;
+  overflow-wrap: anywhere;
+}
+.service-summary p { margin: 7px 0; font-size: 13px; }
+.service-summary small { color: #66736a; }
+.credential-option { display: grid; gap: 9px; }
+.credential-option button { justify-self: start; }
+.sidebar-card [data-testid="active-provider"] { overflow-wrap: anywhere; }

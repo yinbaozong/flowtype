@@ -1,0 +1,22 @@
+import assert from 'node:assert/strict'
+import { build } from 'esbuild'
+const result = await build({ entryPoints: ['src/shared/provider-status.ts'], bundle: true, platform: 'node', format: 'esm', write: false })
+const { credentialSuffix, publicProviderSettings, providerStatus } = await import(`data:text/javascript;base64,${Buffer.from(result.outputFiles[0].text).toString('base64')}`)
+const settings = { provider: 'qwen', recognitionMode: 'realtime', qwenApiKey: 'private-qwen-12345678', volcanoApiKey: 'private-volc-87654321', volcanoAccessKey: '', deepseekApiKey: 'private-deep-abcdefgh', volcanoResourceId: 'volc.seedasr.sauc.concurrent', qwenApiKeyEncrypted: 'opaque-secret' }
+const visible = publicProviderSettings(settings)
+assert.equal(visible.qwenKeySuffix, '12345678')
+assert.equal(visible.volcanoKeySuffix, '87654321')
+assert.equal(visible.deepseekKeySuffix, 'abcdefgh')
+assert.equal(visible.qwenApiKey, '')
+assert.equal(visible.volcanoApiKey, '')
+assert.equal(visible.deepseekApiKey, '')
+assert.equal(visible.qwenApiKeyEncrypted, undefined)
+assert.ok(!JSON.stringify(visible).includes('private-'))
+assert.equal(credentialSuffix('short'), '', 'do not expose an entire short credential')
+assert.equal(providerStatus(visible).model, 'qwen3-asr-flash-realtime')
+assert.equal(providerStatus({ ...visible, recognitionMode: 'batch' }).model, 'qwen3-asr-flash')
+assert.equal(providerStatus({ ...visible, provider: 'volcano' }).suffix, '87654321')
+assert.equal(providerStatus({ ...visible, provider: 'volcano' }).model, 'volc.seedasr.sauc.concurrent')
+assert.equal(providerStatus({ ...visible, provider: 'deepseek' }).suffix, 'abcdefgh')
+assert.equal(providerStatus({ ...visible, provider: 'volcano', volcanoAccessKeySuffix: 'legacy99' }).suffix, 'legacy99')
+console.log('PASS provider/model switching, credential suffixes, short-key protection and no saved secrets exposed')

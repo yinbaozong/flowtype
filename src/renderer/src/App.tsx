@@ -20,7 +20,8 @@ import {
   X
 } from 'lucide-react'
 import flowtypeIcon from '../../../resources/flowtype-icon.png'
-import type { AppPage, AppSettings, AppState, HistoryItem, Provider } from '../../shared/types'
+import type { AppPage, AppSettings, AppState, HistoryItem, Provider, PublicSettings } from '../../shared/types'
+import { providerStatus, type ProviderSettings } from '../../shared/provider-status'
 import {
   localeTag,
   providerName,
@@ -329,11 +330,11 @@ function SettingsPage({
   onSave,
   t
 }: {
-  settings: AppSettings & { hasQwenApiKey?: boolean; hasVolcanoApiKey?: boolean; hasDeepSeekApiKey?: boolean }
+  settings: PublicSettings
   onSave: (settings: AppSettings) => Promise<void>
   t: Translator
 }): React.JSX.Element {
-  const [draft, setDraft] = useState(settings)
+  const [draft, setDraft] = useState<ProviderSettings>(settings)
   const [notice, setNotice] = useState('')
   const [testing, setTesting] = useState(false)
   const [capturingShortcut, setCapturingShortcut] = useState(false)
@@ -373,11 +374,30 @@ function SettingsPage({
       setCapturingUndoShortcut(false)
     }
   }
-  useEffect(() => setDraft(settings), [settings])
+  const savedSignature = JSON.stringify(settings)
+  useEffect(() => setDraft(settings), [savedSignature])
+  const en = draft.uiLanguage === 'en'
+  const active = providerStatus(settings)
+  const pending = providerStatus(draft)
+  const hasPending = draft.provider !== settings.provider || pending.model !== active.model || Boolean(draft.qwenApiKey || draft.volcanoApiKey || draft.deepseekApiKey || draft.volcanoAccessKey)
+  const selectCredential = (provider: Provider, field: 'qwenApiKey' | 'volcanoApiKey' | 'deepseekApiKey', value: string): void => {
+    setDraft(current => ({ ...current, [field]: value, provider: value ? provider : current.provider, ...(field === 'volcanoApiKey' && value ? { volcanoAccessKey: '', volcanoAccessKeySuffix: '' } : {}) }))
+  }
+  const useService = async (provider: Provider): Promise<void> => {
+    const next = { ...draft, provider }
+    setDraft(next)
+    setNotice(en ? 'Saving selected service…' : '正在保存所选服务…')
+    try {
+      await onSave(next)
+      setDraft(current => ({ ...current, qwenApiKey: '', volcanoApiKey: '', deepseekApiKey: '', volcanoAccessKey: '' }))
+      setNotice(en ? 'Selected service saved. Run the connection test to verify access.' : '已切换到所选服务，请运行连接测试确认权限。')
+    } catch (error) { setNotice(error instanceof Error ? error.message : t('saveFailed')) }
+  }
   const save = async (): Promise<void> => {
     setNotice(t('saving'))
     try {
       await onSave(draft)
+      setDraft(current => ({ ...current, qwenApiKey: '', volcanoApiKey: '', deepseekApiKey: '', volcanoAccessKey: '' }))
       setNotice(t('settingsSaved'))
     } catch (error) {
       setNotice(error instanceof Error ? error.message : t('saveFailed'))
@@ -414,6 +434,12 @@ function SettingsPage({
         <div className="settings-group__title"><h2>{t('recognitionSettings')}</h2><p>{t('recognitionSettingsDescription')}</p></div>
         <div className="settings-fields">
           <label><span>{t('recognitionService')}</span><select value={draft.provider} onChange={(event) => update('provider', event.target.value as Provider)}><option value="demo">{t('providerDemo')}</option><option value="qwen">{t('providerQwen')}</option><option value="volcano">{t('providerVolcano')}</option><option value="deepseek">{t('providerDeepSeek')}</option></select></label>
+          <div className="service-summary" data-testid="service-summary">
+            <strong>{en ? 'Currently active: ' : '当前生效：'}{providerName(settings.provider, t)}</strong>
+            <p>{active.model} · {active.configured ? `Key ••••${active.suffix || (en ? '(hidden)' : '（已隐藏）')}${active.legacy ? ' (Access Token)' : ''}` : en ? 'No credential configured' : '尚未配置凭证'}</p>
+            {hasPending ? <p>{en ? 'Not saved yet: ' : '待保存：'}{providerName(draft.provider, t)} · {pending.model} · {pending.configured ? `Key ••••${pending.suffix || (en ? '(hidden)' : '（已隐藏）')}` : en ? 'No credential' : '未配置凭证'}</p> : null}
+            <small>{en ? 'A saved credential is not proof of connectivity. No automatic provider fallback.' : '已配置不代表已连通。录音使用当前生效服务，不会自动回退到其他服务。'}</small>
+          </div>
           <label className="toggle-row"><span><strong>{draft.uiLanguage === 'en' ? 'Prewarm microphone' : '预热麦克风'}</strong><small>{draft.uiLanguage === 'en' ? 'Off: microphone opens only on press. On: lower start delay, Windows may show microphone in use.' : '默认关闭，仅按键时打开麦克风；开启可进一步减少准备时间，但 Windows 可能显示占用。'}</small></span><input type="checkbox" checked={Boolean(draft.warmMicrophone)} onChange={event => update('warmMicrophone', event.target.checked)} /></label>
           {draft.provider === 'qwen' || draft.provider === 'volcano' ? <label><span>{draft.uiLanguage === 'en' ? 'Recognition mode' : '识别方式'}</span><select value={draft.recognitionMode || 'realtime'} onChange={event => update('recognitionMode', event.target.value as 'realtime' | 'batch')}><option value="realtime">{draft.uiLanguage === 'en' ? 'Realtime, continuous output' : '实时识别，连续出字'}</option><option value="batch">{draft.uiLanguage === 'en' ? 'Transcribe after release' : '松手后整段识别'}</option></select></label> : null}
           {draft.provider === 'deepseek' ? <p>{draft.uiLanguage === 'en' ? 'Official DeepSeek ASR: automatic language detection, transcription after release. Chat model pricing does not apply to speech.' : '使用 DeepSeek 官方 ASR，自动检测语种，松手后识别。语音单独计费，不使用聊天模型的 Token 价格。'}</p> : null}
@@ -465,11 +491,11 @@ function SettingsPage({
       <section className="settings-group">
         <div className="settings-group__title"><h2>{t('apiCredentials')}</h2><p>{t('apiCredentialsHint')}</p></div>
         <div className="settings-fields">
-          <label><span>Qwen API Key {settings.hasQwenApiKey ? <em>{t('configured')}</em> : null}</span><input type="password" value={draft.qwenApiKey} onChange={(event) => setDraft((current) => ({ ...current, qwenApiKey: event.target.value, provider: event.target.value ? 'qwen' : current.provider }))} placeholder={settings.hasQwenApiKey ? t('replaceKey') : 'sk-...'} /></label>
-          <label><span>Volcano API Key {settings.hasVolcanoApiKey ? <em>{t('configured')}</em> : null}</span><input type="password" value={draft.volcanoApiKey} onChange={(event) => update('volcanoApiKey', event.target.value)} placeholder={settings.hasVolcanoApiKey ? t('replaceKey') : t('consoleApiKey')} /></label>
-          <label><span>DeepSeek API Key {settings.hasDeepSeekApiKey ? <em>{t('configured')}</em> : null}</span><input type="password" value={draft.deepseekApiKey || ''} onChange={event => update('deepseekApiKey', event.target.value)} placeholder={settings.hasDeepSeekApiKey ? t('replaceKey') : 'sk-...'} /></label>
+          <div className="credential-option"><label><span>Qwen API Key {settings.hasQwenApiKey ? <em>{t('configured')} · ••••{settings.qwenKeySuffix || (en ? '(hidden)' : '（已隐藏）')}</em> : null}</span><input type="password" value={draft.qwenApiKey} onChange={event => selectCredential('qwen', 'qwenApiKey', event.target.value)} placeholder={settings.hasQwenApiKey ? t('replaceKey') : 'sk-...'} /></label><button className="secondary-button" type="button" data-use-provider="qwen" onClick={() => void useService('qwen')}>{en ? 'Save and use Qwen' : '保存并使用千问'}</button></div>
+          <div className="credential-option"><label><span>{en ? 'Doubao / Volcano API Key' : '豆包 / Volcano API Key'} {settings.hasVolcanoApiKey ? <em>{t('configured')} · ••••{settings.volcanoKeySuffix || (en ? '(hidden)' : '（已隐藏）')}</em> : null}</span><input type="password" value={draft.volcanoApiKey} onChange={event => selectCredential('volcano', 'volcanoApiKey', event.target.value)} placeholder={settings.hasVolcanoApiKey ? t('replaceKey') : t('consoleApiKey')} /></label><button className="secondary-button" type="button" data-use-provider="volcano" onClick={() => void useService('volcano')}>{en ? 'Save and use Doubao' : '保存并使用豆包'}</button></div>
+          <div className="credential-option"><label><span>DeepSeek API Key {settings.hasDeepSeekApiKey ? <em>{t('configured')} · ••••{settings.deepseekKeySuffix || (en ? '(hidden)' : '（已隐藏）')}</em> : null}</span><input type="password" value={draft.deepseekApiKey || ''} onChange={event => selectCredential('deepseek', 'deepseekApiKey', event.target.value)} placeholder={settings.hasDeepSeekApiKey ? t('replaceKey') : 'sk-...'} /></label><button className="secondary-button" type="button" data-use-provider="deepseek" onClick={() => void useService('deepseek')}>{en ? 'Save and use DeepSeek' : '保存并使用 DeepSeek'}</button></div>
           <label><span>Volcano App ID ({t('optional')})</span><input value={draft.volcanoAppId} onChange={(event) => update('volcanoAppId', event.target.value)} placeholder={t('volcanoAppIdHint')} /></label>
-          <label><span>{t('volcanoAccessKey')}</span><input type="password" value={draft.volcanoAccessKey} onChange={(event) => update('volcanoAccessKey', event.target.value)} placeholder={t('leaveEmpty')} /></label>
+          <label><span>{t('volcanoAccessKey')} {settings.volcanoAccessKeySuffix ? <em>••••{settings.volcanoAccessKeySuffix}</em> : null}</span><input type="password" value={draft.volcanoAccessKey} onChange={(event) => update('volcanoAccessKey', event.target.value)} placeholder={t('leaveEmpty')} /></label>
           <button className="secondary-button provider-test-button" disabled={testing} onClick={() => void testProvider()}>{testing ? t('verifying') : t('verifyProvider')}</button>
         </div>
       </section>
@@ -492,7 +518,8 @@ export function App(): React.JSX.Element {
     setState(await window.flowApi.saveSettings(next))
   }
 
-  const activeSettings: AppSettings & { hasQwenApiKey?: boolean; hasVolcanoApiKey?: boolean; hasDeepSeekApiKey?: boolean } = state.settings
+  const activeSettings = state.settings
+  const activeService = providerStatus(activeSettings)
 
   return (
     <div className="app-shell" lang={uiLanguage === 'en' ? 'en' : 'zh-CN'}>
@@ -500,8 +527,9 @@ export function App(): React.JSX.Element {
         <div className="brand"><img className="brand__mark" src={flowtypeIcon} alt="" /><strong>FlowType</strong></div>
         <nav>{nav.map((item) => { const Icon = item.icon; return <button className={page === item.id ? 'active' : ''} key={item.id} onClick={() => setPage(item.id)}><Icon size={18} /><span>{t(item.label)}</span></button> })}</nav>
         <div className="sidebar-card">
-          <div><span className={state.settings.provider === 'demo' ? 'status-dot status-dot--demo' : 'status-dot'} /><strong>{providerName(state.settings.provider, t)}</strong></div>
-          <p>{!state.shortcutReady ? t('shortcutNotReady') : state.settings.provider === 'demo' ? t('configureApi') : t('serviceReady')}</p>
+          <div><span className="status-dot status-dot--demo" /><strong>{providerName(state.settings.provider, t)}</strong></div>
+          <p data-testid="active-provider">{activeService.model}<br />{activeService.configured ? `Key ••••${activeService.suffix || (uiLanguage === 'en' ? '(hidden)' : '（已隐藏）')}` : t('configureApi')}</p>
+          <p>{!state.shortcutReady ? t('shortcutNotReady') : uiLanguage === 'en' ? 'Saved selection; connection not verified here' : '已选服务，连接状态请以测试结果为准'}</p>
           <button onClick={() => setPage('settings')}>{t('manageService')} <ChevronRight size={14} /></button>
         </div>
         <button className="sidebar-record" onClick={() => window.flowApi.toggleRecording()}><Command size={16} /><span>{state.recording ? t('listening') : t('pressShortcut')}</span><kbd>{formatShortcut(state.settings.shortcut)}</kbd></button>

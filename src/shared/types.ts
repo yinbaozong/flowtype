@@ -25,6 +25,10 @@ export interface AppSettings {
 }
 
 export interface PublicSettings extends AppSettings {
+  qwenKeySuffix?: string
+  volcanoKeySuffix?: string
+  volcanoAccessKeySuffix?: string
+  deepseekKeySuffix?: string
   hasQwenApiKey: boolean
   hasVolcanoApiKey: boolean
   hasDeepSeekApiKey?: boolean
